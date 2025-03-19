@@ -39,7 +39,7 @@ public:
 	WindowManager * windowManager = nullptr;
 
 	// shader programs
-	std::shared_ptr<Program> prog, texProg, shadowProg, windProg;
+	std::shared_ptr<Program> prog, texProg;
 
 	// geometry
 	std::vector<std::shared_ptr<Shape>> meshes;
@@ -65,7 +65,7 @@ public:
 	// textures
 	shared_ptr<Texture> groundTex; // Ground texture
 	shared_ptr<Texture> skyTex; // Sky texture
-	shared_ptr<Texture> metalTex; // corroded metal texture
+	shared_ptr<Texture> doorTex; // brick texture
 
 	// camera variables
 	float phi = 0.0f;								// Pitch angle in radians
@@ -106,6 +106,11 @@ public:
 
 	// door lighting
 	float doorLightIntensity = 1.0f;
+
+	// particle system
+	particleSys* doorParticleSystem = nullptr;
+	std::shared_ptr<Program> partProg; // Shader program for particles
+	std::shared_ptr<Texture> particleTexture; // Texture for particles
 
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
@@ -326,6 +331,36 @@ public:
 			// store in the map using the simplified key
 			multiMeshes[key] = multiMesh;
 		}
+	}
+
+	void initParticleSystem(const std::string& resourceDirectory) {
+		// Initialize the particle shader program
+		partProg = make_shared<Program>();
+		partProg->setVerbose(true);
+		partProg->setShaderNames(
+			resourceDirectory + "/lab10_vert.glsl",
+			resourceDirectory + "/lab10_frag.glsl");
+		if (!partProg->init()) {
+			std::cerr << "Particle shader failed to compile... exiting!" << std::endl;
+			exit(1);
+		}
+		partProg->addUniform("P");
+		partProg->addUniform("M");
+		partProg->addUniform("V");
+		partProg->addUniform("pColor");
+		partProg->addUniform("alphaTexture");
+		partProg->addAttribute("vertPos");
+
+		// Load the particle texture
+		particleTexture = make_shared<Texture>();
+		particleTexture->setFilename(resourceDirectory + "/alpha.bmp");
+		particleTexture->init();
+		particleTexture->setUnit(3); // Use texture unit 3
+		particleTexture->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+
+		// Create the particle system (initially at origin)
+		doorParticleSystem = new particleSys(vec3(0, 0, 0));
+		doorParticleSystem->gpuSetup();
 	}
 
 	void initStars() {
@@ -567,46 +602,130 @@ public:
 		foliagePlacements[foliageKey] = placements;
 	}
 
-	void initNature() {
+	//void initNature() {
+	//	std::string natureKey = "natureCollection";
+	//	if (multiMeshes.find(natureKey) == multiMeshes.end()) {
+	//		std::cerr << "Nature collection not loaded." << std::endl;
+	//		return;
+	//	}
+	//	MultiMesh& nature = multiMeshes[natureKey];
+	//	vector<vector<glm::mat4>> placements;	// prepare a container for the placements
+	//	placements.resize(3);					// one vector per tree type
+
+	//	// define inner and outer radii for annular region
+	//	float rInner = 4.0f * sphereRadius * multiMeshes["sphereWTex"].scale / 3.0f;
+	//	float rOuter = 2.0f * sphereRadius * multiMeshes["sphereWTex"].scale - 5.0f;
+
+	//	// Set up random generators.
+	//	std::default_random_engine rng(std::random_device{}());
+	//	std::uniform_real_distribution<float> rDist(rInner, rOuter);
+	//	std::uniform_real_distribution<float> thetaDist(0.0f, glm::two_pi<float>());
+	//	std::uniform_int_distribution<int> countDistT(50, 70);						// random number of trees
+	//	std::uniform_int_distribution<int> countDistLS(10, 20);						// random number of stumps and logs
+	//	std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>());	// random rotation
+
+	//	for (int i = 0; i < 3; i++) {												// range of placements per type
+	//		int instanceCount = i < 1 ? countDistT(rng) : countDistLS(rng);
+	//		placements[i].resize(instanceCount);
+	//		for (int j = 0; j < instanceCount; j++) {
+	//			// choose a random radius and angle within the annular region
+	//			float r = rDist(rng);
+	//			float theta = thetaDist(rng);
+	//			float x = r * cos(theta);
+	//			float z = r * sin(theta);
+	//			float y = -1.25f;													// fix the vertical position
+	//			float angle = rotDist(rng);											// Random rotation about Y.
+	//			glm::mat4 model = glm::translate(glm::mat4(1.0f),
+	//				glm::vec3(x, y, z));											// build model matrix and set translation
+	//			model = glm::rotate(model, angle, glm::vec3(0, 1, 0));				// set random rotation
+	//			model = glm::scale(model, 5.0f * glm::vec3(1, 1, 1));				// set scale
+	//			placements[i][j] = model;
+	//		}
+	//	}
+	//	treePlacements[natureKey] = placements;
+	//}
+
+	void Application::initNature() {
 		std::string natureKey = "natureCollection";
 		if (multiMeshes.find(natureKey) == multiMeshes.end()) {
 			std::cerr << "Nature collection not loaded." << std::endl;
 			return;
 		}
 		MultiMesh& nature = multiMeshes[natureKey];
-		vector<vector<glm::mat4>> placements;	// prepare a container for the placements
-		placements.resize(3);					// one vector per tree type
+		vector<vector<glm::mat4>> placements;   // prepare a container for the placements
+		placements.resize(3);                   // one vector per tree type
 
 		// define inner and outer radii for annular region
 		float rInner = 4.0f * sphereRadius * multiMeshes["sphereWTex"].scale / 3.0f;
 		float rOuter = 2.0f * sphereRadius * multiMeshes["sphereWTex"].scale - 5.0f;
 
-		// Set up random generators.
+		// Set up random generators
 		std::default_random_engine rng(std::random_device{}());
 		std::uniform_real_distribution<float> rDist(rInner, rOuter);
 		std::uniform_real_distribution<float> thetaDist(0.0f, glm::two_pi<float>());
-		std::uniform_int_distribution<int> countDistT(50, 70);						// random number of trees
-		std::uniform_int_distribution<int> countDistLS(10, 20);						// random number of stumps and logs
-		std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>());	// random rotation
+		std::uniform_int_distribution<int> countDistT(50, 70);                     // random number of trees
+		std::uniform_int_distribution<int> countDistLS(10, 20);                     // random number of stumps and logs
+		std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>());  // random rotation
 
-		for (int i = 0; i < 3; i++) {												// range of placements per type
+		// Define door position and the path that should be kept clear
+		float sphereEdge = sphereRadius * multiMeshes["sphereWTex"].scale * 2.0f;
+		glm::vec3 doorPos(0, -1.25f, sphereEdge - 1.0f); // Door position
+		glm::vec3 centerPos(0, -1.25f, 0); // Center of the scene
+
+		// Calculate door-to-center direction vector
+		glm::vec3 doorToCenter = glm::normalize(centerPos - doorPos);
+
+		float corridorWidth = 1.0f; // Width of clear path
+
+		for (int i = 0; i < 3; i++) { // range of placements per type
 			int instanceCount = i < 1 ? countDistT(rng) : countDistLS(rng);
-			placements[i].resize(instanceCount);
-			for (int j = 0; j < instanceCount; j++) {
-				// choose a random radius and angle within the annular region
+			// Vector to store valid placements for this tree type
+			std::vector<glm::mat4> validPlacements;
+
+			// Try to place more trees than needed, then filter out those in the corridor
+			int attemptsLimit = instanceCount * 2; // Generate twice as many candidates
+
+			for (int j = 0; j < attemptsLimit && validPlacements.size() < instanceCount; j++) {
+				// Choose a random radius and angle within the annular region
 				float r = rDist(rng);
 				float theta = thetaDist(rng);
 				float x = r * cos(theta);
 				float z = r * sin(theta);
-				float y = -1.25f;													// fix the vertical position
-				float angle = rotDist(rng);											// Random rotation about Y.
-				glm::mat4 model = glm::translate(glm::mat4(1.0f),
-					glm::vec3(x, y, z));											// build model matrix and set translation
-				model = glm::rotate(model, angle, glm::vec3(0, 1, 0));				// set random rotation
-				model = glm::scale(model, 5.0f * glm::vec3(1, 1, 1));				// set scale
-				placements[i][j] = model;
+				float y = -1.25f; // Fix the vertical position
+
+				// Create potential position
+				glm::vec3 treePos(x, y, z);
+
+				// Check if the tree would block the path from door to center
+				// Calculate distance from point to line (door-to-center)
+				glm::vec3 doorToTree = treePos - doorPos;
+				float projectionLength = glm::dot(doorToTree, doorToCenter);
+
+				// Only consider trees that are between the door and center (not behind the door)
+				bool inPathDirection = projectionLength > 0 && projectionLength < glm::length(centerPos - doorPos);
+
+				// Calculate perpendicular distance from tree to the door-center line
+				glm::vec3 projection = doorPos + doorToCenter * projectionLength;
+				float distanceToPath = glm::length(treePos - projection);
+
+				// Skip this position if the tree would be in the corridor
+				if (inPathDirection && distanceToPath < corridorWidth) {
+					continue;  // Skip this position
+				}
+
+				// Position is valid, create the model matrix
+				float angle = rotDist(rng);                                        // Random rotation about Y
+				glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z));  // Build model matrix and set translation
+				model = glm::rotate(model, angle, glm::vec3(0, 1, 0));             // Set random rotation
+				model = glm::scale(model, 5.0f * glm::vec3(1, 1, 1));              // Set scale
+
+				validPlacements.push_back(model);
 			}
+
+			// Store the valid placements (might be less than requested if many were filtered out)
+			placements[i] = validPlacements;
 		}
+
 		treePlacements[natureKey] = placements;
 	}
 
@@ -664,11 +783,11 @@ public:
 		skyTex->setUnit(1);
 		skyTex->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
-		metalTex = make_shared<Texture>();
-		metalTex->setFilename(resourceDirectory + "/stone_bricks_2k.jpg");
-		metalTex->init();
-		metalTex->setUnit(2);
-		metalTex->setWrapModes(GL_REPEAT, GL_REPEAT);
+		doorTex = make_shared<Texture>();
+		doorTex->setFilename(resourceDirectory + "/stone_bricks_2k.jpg");
+		doorTex->init();
+		doorTex->setUnit(2);
+		doorTex->setWrapModes(GL_REPEAT, GL_REPEAT);
 	}
 
 	//directly pass quad for the ground to the GPU
@@ -1104,11 +1223,9 @@ public:
 				glm::vec3 doorPos(0, -1.25f, sphereEdge - 2.0f);
 				Model->translate(doorPos);
 
-				// Scale appropriate to the scene
-				Model->scale(vec3(multiMeshes[modelKey].scale));
-
-				// Use texture shader since this will be textured
-				texProg->bind();
+				Model->scale(vec3(multiMeshes[modelKey].scale)); // Scale appropriate to the scene
+				
+				texProg->bind(); // Use texture shader since this will be textured
 
 				// Set up uniforms for the texture program
 				glUniformMatrix4fv(texProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
@@ -1116,17 +1233,13 @@ public:
 				glUniform3f(texProg->getUniform("lightPos"), moonLightPos.x, moonLightPos.y, moonLightPos.z);
 				glUniform1f(texProg->getUniform("MatShine"), 10.0);
 
-				// Create texture for the door
-				metalTex->bind(texProg->getUniform("Texture"));  // Use corroded metal texture
+				doorTex->bind(texProg->getUniform("Texture")); // Create texture for the door
 
-				// Apply the model matrix
-				setModel(texProg, Model);
+				setModel(texProg, Model); // Apply the model matrix
 
-				// Draw the moonDoor
-				multiMeshes[modelKey].shapes[0]->draw(texProg);
+				multiMeshes[modelKey].shapes[0]->draw(texProg); // Draw the moonDoor
 
-				// unbind texture shader
-				texProg->unbind();
+				texProg->unbind(); // unbind texture shader
 
 				//==============================
 				// draw the illuminated doorway
@@ -1166,6 +1279,38 @@ public:
 					prog->unbind(); // unbind normal shader
 
 				Model->popMatrix(); // Pop the light plane transforms
+
+				//==============================
+				// Draw the particles
+				//==============================
+				Model->pushMatrix();
+					// Move particles to the center of the doorway
+					glm::vec3 doorCenter = (multiMeshes["moonDoor"].shapes[0]->min + multiMeshes["moonDoor"].shapes[0]->max) * 0.5f;
+					Model->translate(doorCenter);
+					// Maybe slightly forward from the door plane
+					Model->translate(vec3(0.0f, 0.0f, 0.1f));
+
+					// Set the emitter position
+					doorParticleSystem->setEmitter(vec3(0, 0, 0)); // Local space origin - transforms handled by matrix
+
+					// Set the camera matrix
+					doorParticleSystem->setCamera(View->topMatrix());
+
+					// Draw the particles
+					partProg->bind();
+					particleTexture->bind(partProg->getUniform("alphaTexture"));
+					CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix())));
+					CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix())));
+					CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix())));
+
+					// Set a warm color for the particles to match the door's glow
+					CHECKED_GL_CALL(glUniform3f(partProg->getUniform("pColor"), 1.0f, 0.7f, 0.2f));
+
+					doorParticleSystem->drawMe(partProg);
+					doorParticleSystem->update();
+
+					partProg->unbind();
+				Model->popMatrix(); // Pop the particle transforms
 			Model->popMatrix(); // pop the door transforms
 		}
 
@@ -1211,6 +1356,7 @@ int main(int argc, char *argv[]) {
 	application->init(resourceDir);
 	application->initGeom(resourceDir);
 	application->initTex(resourceDir);
+	application->initParticleSystem(resourceDir);
 	application->initGround();
 	application->initFoliage();
 	application->initStars();
@@ -1222,6 +1368,7 @@ int main(int argc, char *argv[]) {
 		glfwSwapBuffers(windowManager->getHandle()); // Swap front and back buffers
 		glfwPollEvents(); // Poll for and process events
 	}
+	
 	windowManager->shutdown(); // Quit program
 	return 0;
 }
