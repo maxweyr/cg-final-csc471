@@ -5,7 +5,7 @@ uniform sampler2D Texture;
 uniform float MatShine;
 uniform int flip; // Uniform to control normal flip
 
-in vec2 vTexCoord;  // Correctly passing texture coordinates
+in vec2 vTexCoord; // passing texture coordinates
 in vec3 fragNor;
 in vec3 lightDir;
 in vec3 EPos;

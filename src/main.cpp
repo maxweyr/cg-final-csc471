@@ -1,6 +1,6 @@
 ﻿/*
  * Program 4 base code - includes modifications to shape and initGeom in preparation to load
- * multi shape objects 
+ * multi shape objects
  * CPE 471 Cal Poly Z. Wood + S. Sueda + I. Dunn
  * Max Eyrich
  */
@@ -38,25 +38,23 @@ public:
 
 	WindowManager * windowManager = nullptr;
 
-	particleSys* doorParticleSystem;
-
-	// shader programs: without texture, with textures
-	std::shared_ptr<Program> prog, texProg, partProg;
+	// shader programs
+	std::shared_ptr<Program> prog, texProg, shadowProg, windProg;
 
 	// geometry
 	std::vector<std::shared_ptr<Shape>> meshes;
 
 	struct MultiMesh {
-		vector<shared_ptr<Shape>> shapes;  // Each sub-mesh in the object
-		float scale;                       // Uniform scale for this object
+		vector<shared_ptr<Shape>> shapes; // Each sub-mesh in the object
+		float scale; // Uniform scale for multimesh objects
 	};
 
 	unordered_map<string, MultiMesh> multiMeshes;  // Store multi-mesh objects
 
 	// containers for static placements
 	std::vector<glm::mat4> starPlacements;
-	unordered_map<string, vector<glm::mat4>> rockPlacements;
 	unordered_map<string, vector<vector<glm::mat4>>> foliagePlacements, treePlacements;
+	unordered_map<string, vector<glm::mat4>> rockPlacements;
 
 	// global data for ground plane - direct load constant defined CPU data to GPU (not obj)
 	GLuint GrndBuffObj, GrndNorBuffObj, GrndTexBuffObj, GIndxBuffObj;
@@ -64,13 +62,10 @@ public:
 	// ground VAO
 	GLuint GroundVertexArrayID;
 
-	// images to be used as textures
-	shared_ptr<Texture> texture0, texture1, texture2, particleTexture; // ground, sky, door, particle textures
-
-	// global data
-	vec3 gMin;
-	float gRot = 0;
-	float gCamH = 0;
+	// textures
+	shared_ptr<Texture> groundTex; // Ground texture
+	shared_ptr<Texture> skyTex; // Sky texture
+	shared_ptr<Texture> metalTex; // corroded metal texture
 
 	// camera variables
 	float phi = 0.0f;								// Pitch angle in radians
@@ -105,48 +100,44 @@ public:
 	int treeIndices[3] = { 11, 13, 15 };			// specific meshes from a multi mesh
 
 	// animation data
+	float lightTrans = 0;
 	float moonSpeed = 0.15f;						// angular speed (rad/s)
 	float moonY = sphereRadius * 0.66f;				// orbit height
 
-	// particle parameters
-	bool keyToggles[256] = { false };
-	float t = 0.0f; //reset in init
-	float h = 0.01f;
-	glm::vec3 doorPos = glm::vec3(0.0f, 0.0f, ((sphereRadius * multiMeshes["sphereWTex"].scale * 2.0f) - 1.0f)); // place door at behind starting camera orientation
+	// door lighting
+	float doorLightIntensity = 1.0f;
 
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
-		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) { // exit the program when 'ESC' is pressed
-			// shutdown particle system
-			delete doorParticleSystem;
+		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {	// exit the program when 'ESC' is pressed
 			glfwSetWindowShouldClose(window, GL_TRUE);
 		}
 
-		if (key == GLFW_KEY_G && action == GLFW_PRESS) { // toggle cinematic tour when 'g' is pressed
-			if (!tourEnabled) { // start tour
-				tourLookAt = glm::vec3(0.0f, 0.0f, 0.0f); // fix the look-at point
-				glm::vec3 start = vec3(15, 5, 0); // use current eye position as the start of the tour
+		if (key == GLFW_KEY_G && action == GLFW_PRESS) {		// toggle cinematic tour when 'g' is pressed
+			if (!tourEnabled) {									// start tour
+				tourLookAt = glm::vec3(0.0f, 0.0f, 0.0f);		// fix the look-at point
+				glm::vec3 start = vec3(15, 5, 0);							// use current eye position as the start of the tour
 				glm::vec3 control = start +
-					glm::vec3(0.0f, 5.0f, 15.0f); // control point to create a nice arc
-				glm::vec3 end = glm::vec3(-15.0f, 5.0f, 0.0f); // end point (destination) for camera to travel to
+					glm::vec3(0.0f, 5.0f, 15.0f);				// choose a control point to create a nice arc
+				glm::vec3 end = glm::vec3(-15.0f, 5.0f, 0.0f);	// end point (destination) for camera to travel to
 				cameraTour = new Spline(start, control,
-					end, tourDuration); // create a quadratic spline (order2) that takes tourDuration seconds
+					end, tourDuration);							// create a quadratic spline (order2) that takes tourDuration seconds
 				tourEnabled = true;
-				lastTourUpdateTime = glfwGetTime(); // reset timer for the spline update
+				lastTourUpdateTime = glfwGetTime();				// reset timer for the spline update
 			} else {
-				tourEnabled = false; // turn off tour mode
+				tourEnabled = false;							// turn off tour mode
 				if (cameraTour) {
 					delete cameraTour;
 					cameraTour = nullptr;
 				}
-				theta = glm::pi<float>(); // reset camera parameters for manual control
+				theta = glm::pi<float>();						// reset camera parameters for manual control
 				phi = 0.0f;
 				radius = 15.0f;
 				updateLookAt();
 			}
 		}
 
-		if (!tourEnabled) {	// if not in tour mode allow manual movement
+		if (!tourEnabled) {										// if not in tour mode allow manual movement
 			if (action == GLFW_PRESS || action == GLFW_REPEAT) {
 				glm::vec3 forward = glm::normalize(lookAt - eye);
 				glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
@@ -161,10 +152,17 @@ public:
 				updateLookAt();
 			}
 		}
-		if (key == GLFW_KEY_Z && action == GLFW_PRESS) { // geometry view when 'z' pressed
+
+		if (key == GLFW_KEY_Q && action == GLFW_PRESS) {			// move light source left when 'q' pressed
+			lightTrans -= 0.5;
+		}
+		if (key == GLFW_KEY_E && action == GLFW_PRESS) {			// move light source right when 'e' pressed
+			lightTrans += 0.5;
+		}
+		if (key == GLFW_KEY_Z && action == GLFW_PRESS) {			// geometry view when 'z' pressed
 			glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 		}
-		if (key == GLFW_KEY_Z && action == GLFW_RELEASE) { // undo geometry view when 'z' released
+		if (key == GLFW_KEY_Z && action == GLFW_RELEASE) {			// undo geometry view when 'z' released
 			glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
 		}
 	}
@@ -269,24 +267,6 @@ public:
 		texProg->addAttribute("vertPos");
 		texProg->addAttribute("vertNor");
 		texProg->addAttribute("vertTex");
-
-		partProg = make_shared<Program>();
-		partProg->setVerbose(true);
-		partProg->setShaderNames(resourceDirectory + "/part_vert.glsl", resourceDirectory + "/part_frag.glsl");
-		if (!partProg->init()) {
-			std::cerr << "Particle shader failed to compile... exiting!" << std::endl;
-			exit(1);
-		}
-		partProg->addUniform("P");
-		partProg->addUniform("M");
-		partProg->addUniform("V");
-		partProg->addUniform("pColor");
-		partProg->addUniform("alphaTexture");
-		partProg->addAttribute("vertPos");
-
-		// create particle system (set the emitter position later)
-		doorParticleSystem = new particleSys(vec3(0, 0, 0));
-		doorParticleSystem->gpuSetup();
 	}
 
 	void initGeom(const std::string& resourceDirectory) {
@@ -304,9 +284,9 @@ public:
 			"rock5.obj",
 			"sphereWTex.obj",
 			"star.obj",
-			"cube.obj",
 			"spaceKit.obj",
-			"moonDoor.obj"
+			"moonDoor.obj",
+			"cube.obj"
 		};
 
 		for (const auto& filename : multiMeshFiles) {
@@ -391,7 +371,7 @@ public:
 			float azimuth = angleIncrement * i;
 
 			// convert to Cartesian coordinates
-			float R = sphereRadius * multiMeshes[sphereKey].scale * 0.95f; // small inner radius offset
+			float R = sphereRadius * multiMeshes[sphereKey].scale * 0.99f; // small inner radius offset
 			float x = R * std::sin(inclination) * std::cos(azimuth);
 			float y = R * std::cos(inclination);
 			float z = R * std::sin(inclination) * std::sin(azimuth);
@@ -587,88 +567,46 @@ public:
 		foliagePlacements[foliageKey] = placements;
 	}
 
-	void Application::initNature() {
+	void initNature() {
 		std::string natureKey = "natureCollection";
 		if (multiMeshes.find(natureKey) == multiMeshes.end()) {
 			std::cerr << "Nature collection not loaded." << std::endl;
 			return;
 		}
 		MultiMesh& nature = multiMeshes[natureKey];
-		vector<vector<glm::mat4>> placements; // prepare a container for the placements
-		placements.resize(3); // one vector per tree type
+		vector<vector<glm::mat4>> placements;	// prepare a container for the placements
+		placements.resize(3);					// one vector per tree type
 
 		// define inner and outer radii for annular region
 		float rInner = 4.0f * sphereRadius * multiMeshes["sphereWTex"].scale / 3.0f;
 		float rOuter = 2.0f * sphereRadius * multiMeshes["sphereWTex"].scale - 5.0f;
 
-		// set up random generators
+		// Set up random generators.
 		std::default_random_engine rng(std::random_device{}());
 		std::uniform_real_distribution<float> rDist(rInner, rOuter);
 		std::uniform_real_distribution<float> thetaDist(0.0f, glm::two_pi<float>());
-		std::uniform_int_distribution<int> countDistT(50, 70); // random number of trees
-		std::uniform_int_distribution<int> countDistLS(10, 20); // random number of stumps and logs
-		std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>()); // random rotation
+		std::uniform_int_distribution<int> countDistT(50, 70);						// random number of trees
+		std::uniform_int_distribution<int> countDistLS(10, 20);						// random number of stumps and logs
+		std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>());	// random rotation
 
-		// define door position and the path that should be kept clear
-		float sphereEdge = sphereRadius * multiMeshes["sphereWTex"].scale * 2.0f;
-		glm::vec3 doorPos(0, -1.25f, sphereEdge - 1.0f); // door position
-		glm::vec3 centerPos(0, -1.25f, 0); // center of the scene
-
-		// calculate door-to-center direction vector
-		glm::vec3 doorToCenter = glm::normalize(centerPos - doorPos);
-
-		// define a corridor width (adjust as needed)
-		float corridorWidth = 5.0f;  // width of clear path
-
-		for (int i = 0; i < 3; i++) { // range of placements per type
+		for (int i = 0; i < 3; i++) {												// range of placements per type
 			int instanceCount = i < 1 ? countDistT(rng) : countDistLS(rng);
-			// vector to store valid placements for this tree type
-			std::vector<glm::mat4> validPlacements;
-
-			// try to place more trees than needed, then filter out those in the corridor
-			int attemptsLimit = instanceCount * 2;  // generate twice as many candidates
-
-			for (int j = 0; j < attemptsLimit && validPlacements.size() < instanceCount; j++) {
+			placements[i].resize(instanceCount);
+			for (int j = 0; j < instanceCount; j++) {
 				// choose a random radius and angle within the annular region
 				float r = rDist(rng);
 				float theta = thetaDist(rng);
 				float x = r * cos(theta);
 				float z = r * sin(theta);
-				float y = -1.25f; // fix the vertical position
-
-				// create potential position
-				glm::vec3 treePos(x, y, z);
-
-				// check if the tree would block the path from door to center
-				// calculate distance from point to line (door-to-center)
-				glm::vec3 doorToTree = treePos - doorPos;
-				float projectionLength = glm::dot(doorToTree, doorToCenter);
-
-				// only consider trees that are between the door and center (not behind the door)
-				bool inPathDirection = projectionLength > 0 && projectionLength < glm::length(centerPos - doorPos);
-
-				// calculate perpendicular distance from tree to the door-center line
-				glm::vec3 projection = doorPos + doorToCenter * projectionLength;
-				float distanceToPath = glm::length(treePos - projection);
-
-				// skip this position if the tree would be in the corridor
-				if (inPathDirection && distanceToPath < corridorWidth) {
-					continue;  // Skip this position
-				}
-
-				// position is valid, create the model matrix
-				float angle = rotDist(rng); // random rotation about Y
-				glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)); // build model matrix and set translation
-				model = glm::rotate(model, angle, glm::vec3(0, 1, 0)); // set random rotation
-				model = glm::scale(model, 5.0f * glm::vec3(1, 1, 1)); // set scale
-
-				validPlacements.push_back(model);
+				float y = -1.25f;													// fix the vertical position
+				float angle = rotDist(rng);											// Random rotation about Y.
+				glm::mat4 model = glm::translate(glm::mat4(1.0f),
+					glm::vec3(x, y, z));											// build model matrix and set translation
+				model = glm::rotate(model, angle, glm::vec3(0, 1, 0));				// set random rotation
+				model = glm::scale(model, 5.0f * glm::vec3(1, 1, 1));				// set scale
+				placements[i][j] = model;
 			}
-
-			// store the valid placements (might be less than requested if many were filtered out)
-			placements[i] = validPlacements;
 		}
-
 		treePlacements[natureKey] = placements;
 	}
 
@@ -714,26 +652,23 @@ public:
 
 	// code to load in the new textures
 	void initTex(const std::string& resourceDirectory) {
-		texture0 = make_shared<Texture>();
-		texture0->setFilename(resourceDirectory + "/cartoonGrass.jpg");
-		texture0->init();
-		texture0->setUnit(0);
-		texture0->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
-		texture1 = make_shared<Texture>();
-		texture1->setFilename(resourceDirectory + "/starSky.jpg");
-		texture1->init();
-		texture1->setUnit(1);
-		texture1->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
-		texture2 = make_shared<Texture>();
-		texture2->setFilename(resourceDirectory + "/bricks.jpg");
-		texture2->init();
-		texture2->setUnit(2);
-		texture2->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
-		particleTexture = make_shared<Texture>();
-		particleTexture->setFilename(resourceDirectory + "/alpha.bmp");
-		particleTexture->init();
-		particleTexture->setUnit(3);
-		particleTexture->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+		groundTex = make_shared<Texture>();
+		groundTex->setFilename(resourceDirectory + "/moss_ground_2k.jpg");
+		groundTex->init();
+		groundTex->setUnit(0);
+		groundTex->setWrapModes(GL_REPEAT, GL_REPEAT);
+
+		skyTex = make_shared<Texture>();
+		skyTex->setFilename(resourceDirectory + "/starSky.jpg");
+		skyTex->init();
+		skyTex->setUnit(1);
+		skyTex->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+
+		metalTex = make_shared<Texture>();
+		metalTex->setFilename(resourceDirectory + "/stone_bricks_2k.jpg");
+		metalTex->init();
+		metalTex->setUnit(2);
+		metalTex->setWrapModes(GL_REPEAT, GL_REPEAT);
 	}
 
 	//directly pass quad for the ground to the GPU
@@ -788,7 +723,7 @@ public:
      void drawGround(shared_ptr<Program> curS) {
      	curS->bind();
      	glBindVertexArray(GroundVertexArrayID);
-     	texture0->bind(curS->getUniform("Texture"));
+     	groundTex->bind(curS->getUniform("Texture"));
 		//draw the ground plane 
   		SetModel(vec3(0, -1, 0), 0, 0, 1, curS);
   		glEnableVertexAttribArray(0);
@@ -950,7 +885,6 @@ public:
 		moonCenter.z += 16.0f;
 		moonCenter.x += 2.5f;
 		glm::vec3 moonPos = moonLightPos - moonCenter;
-		glm::vec3 lightDir = glm::normalize(moonLightPos); // direction of light for shadows
 
 		// If tour mode is active, update the spline and set the eye position
 		if (tourEnabled && cameraTour != nullptr) {
@@ -989,15 +923,15 @@ public:
 
 		glDepthFunc(GL_LEQUAL);										// set the depth function to always draw the sphere!
 		modelKey = "sphereWTex";									// sphere mesh for background
-		texture1->bind(texProg->getUniform("Texture"));				// night sky texture
+		skyTex->bind(texProg->getUniform("Texture"));				// night sky texture
 		glUniform1i(texProg->getUniform("flip"), 1);				// set flip normals flag
 		if (multiMeshes.find(modelKey) != multiMeshes.end() && !multiMeshes[modelKey].shapes.empty()) {
 			Model->pushMatrix();
-			Model->loadIdentity();
-			Model->scale(vec3(groundSize
-				* multiMeshes[modelKey].scale));					// set scale factor
-			setModel(texProg, Model);								// apply transforms
-			multiMeshes[modelKey].shapes[0]->draw(texProg);			// draw the sphere
+				Model->loadIdentity();
+				Model->scale(vec3(groundSize
+					* multiMeshes[modelKey].scale));					// set scale factor
+				setModel(texProg, Model);								// apply transforms
+				multiMeshes[modelKey].shapes[0]->draw(texProg);			// draw the sphere
 			Model->popMatrix();
 		}
 		glUniform1i(texProg->getUniform("flip"), 0);				// reset flip normals flag
@@ -1007,7 +941,7 @@ public:
 
 		texProg->unbind();
 
-		prog->bind(); // load the simple shader (no texture)
+		prog->bind();												// load the simple shader (no texture)
 		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
 		//glUniform3f(prog->getUniform("lightPos"), -2.0 + lightTrans, 2.0, 2.0);
@@ -1024,6 +958,7 @@ public:
 		glUniform3f(prog->getUniform("fixedLightPos"), 0, moonY, 0);
 		glUniform1i(prog->getUniform("ignoreLight"), 0); // defualt ignore lighting is off
 
+		glm::vec3 lightDir = glm::normalize(moonLightPos);			// direction of light for shadows
 
 		glUniform1i(prog->getUniform("applyWind"), 1);				// set wave animation flag to true
 		modelKey = "foliageCollection";								// small plant mesh collection
@@ -1050,13 +985,13 @@ public:
 		modelKey = "spaceKit";											// moon mesh
 		if (multiMeshes.find(modelKey) != multiMeshes.end() && !multiMeshes[modelKey].shapes.empty()) {
 			Model->pushMatrix();
-			Model->loadIdentity();
-			Model->translate(moonPos);							// translate to orbit position
-			Model->scale(vec3(2.0f));								// set scale factor
-			setModel(prog, Model);									// apply transforms
-			SetMaterial(prog, 1);									// apply moon material
-			multiMeshes[modelKey].shapes[0]->draw(prog);			// draw moon
-			multiMeshes[modelKey].shapes[1]->draw(prog);			// draw moon
+				Model->loadIdentity();
+				Model->translate(moonPos);							// translate to orbit position
+				Model->scale(vec3(2.0f));								// set scale factor
+				setModel(prog, Model);									// apply transforms
+				SetMaterial(prog, 1);									// apply moon material
+				multiMeshes[modelKey].shapes[0]->draw(prog);			// draw moon
+				multiMeshes[modelKey].shapes[1]->draw(prog);			// draw moon
 			Model->popMatrix();
 		}
 
@@ -1153,47 +1088,88 @@ public:
 			}
 		}
 
-		modelKey = "moonDoor";									// door mesh
-		if (multiMeshes.find(modelKey) != multiMeshes.end() && !multiMeshes[modelKey].shapes.empty()) {
-			Model->pushMatrix();
-				Model->loadIdentity();
-				Model->translate(doorPos);								// translate to the door position
-				Model->scale(2.0f * glm::vec3(multiMeshes[modelKey].scale));	// scale the door to scale factor
-				setModel(prog, Model);									// Set the model matrix
-				SetMaterial(prog, 7);									// Set door mat
-				multiMeshes[modelKey].shapes[0]->draw(prog);			// draw door
-
-				Model->pushMatrix();
-					glUniform1i(prog->getUniform("ignoreLight"), 1); // set to ignore lighting
-					glm::mat4 shadowMat = computeShadowMatrix(Model->topMatrix(), lightDir, 0.15f, -1.25f);
-					glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(shadowMat));
-					SetMaterial(prog, 9);								// shadow material
-					multiMeshes[modelKey].shapes[0]->draw(prog);			// draw shadows for rocks
-					glUniform1i(prog->getUniform("ignoreLight"), 0); // reset ignore lighting
-				Model->popMatrix();
-			Model->popMatrix();
-		}
 		prog->unbind();
 
+		// Render the moonDoor
+		modelKey = "moonDoor";  // moonDoor mesh key
+		if (multiMeshes.find(modelKey) != multiMeshes.end() && !multiMeshes[modelKey].shapes.empty()) {
+			//===========
+			// draw door
+			//===========
+			Model->pushMatrix();
+				Model->loadIdentity();
 
-		// Pass the emitter position to the particle system
-		doorParticleSystem->setEmitter(doorPos);
+				// Position the moonDoor behind starting camera orientation
+				float sphereEdge = sphereRadius * multiMeshes["sphereWTex"].scale * 2.0f;
+				glm::vec3 doorPos(0, -1.25f, sphereEdge - 2.0f);
+				Model->translate(doorPos);
 
-		// Draw
-		partProg->bind();
-		texture2->bind(partProg->getUniform("alphaTexture"));
-		CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("P"), 1, GL_FALSE, value_ptr(P->topMatrix())));
-		CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("V"), 1, GL_FALSE, value_ptr(V->topMatrix())));
-		CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("M"), 1, GL_FALSE, value_ptr(M->topMatrix())));
+				// Scale appropriate to the scene
+				Model->scale(vec3(multiMeshes[modelKey].scale));
 
-		CHECKED_GL_CALL(glUniform3f(partProg->getUniform("pColor"), 0.9, 0.7, 0.7));
+				// Use texture shader since this will be textured
+				texProg->bind();
 
-		doorParticleSystem->drawMe(partProg);
-		doorParticleSystem->update();
+				// Set up uniforms for the texture program
+				glUniformMatrix4fv(texProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+				glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
+				glUniform3f(texProg->getUniform("lightPos"), moonLightPos.x, moonLightPos.y, moonLightPos.z);
+				glUniform1f(texProg->getUniform("MatShine"), 10.0);
 
-		partProg->unbind();
+				// Create texture for the door
+				metalTex->bind(texProg->getUniform("Texture"));  // Use corroded metal texture
 
-		// pop matrix stacks
+				// Apply the model matrix
+				setModel(texProg, Model);
+
+				// Draw the moonDoor
+				multiMeshes[modelKey].shapes[0]->draw(texProg);
+
+				// unbind texture shader
+				texProg->unbind();
+
+				//==============================
+				// draw the illuminated doorway
+				//==============================
+				Model->pushMatrix();
+					prog->bind(); // Use the non-textured shader
+					float doorY = (multiMeshes["moonDoor"].shapes[0]->max.y + multiMeshes["moonDoor"].shapes[0]->min.y) * 0.5f;
+					Model->translate(vec3(0.0f, doorY, 0.0f)); // Slightly in front of the door
+					Model->scale(vec3(2.0f, 4.0f, 0.01f)); // Scale the light to fit the doorway opening
+
+					// Apply animation with limited opacity range (30-50%)
+					float minOpacity = 0.3f; // Minimum opacity (30%)
+					float maxOpacity = 0.5f; // Maximum opacity (50%)
+					float opacityRange = maxOpacity - minOpacity;
+					float baseOpacity = minOpacity + (opacityRange / 2.0f); // Center point of the range
+					float fluctuation = opacityRange / 2.0f; // Half of the range for fluctuation
+					doorLightIntensity = baseOpacity + fluctuation * sin(currentTime * 0.3f);
+
+					glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
+
+					// Set up color with constant RGB but varying alpha
+					glUniform3f(prog->getUniform("MatAmb"), 0.6f, 0.2f, 0.0f);     // deep orange-red ambient
+					glUniform3f(prog->getUniform("MatDif"), 1.0f, 0.5f, 0.0f);     // bright orange diffuse
+					glUniform3f(prog->getUniform("MatSpec"), 1.0f, 0.7f, 0.3f);    // golden yellow specular
+					glUniform1f(prog->getUniform("MatShine"), 0.0f);               // no shininess for a pure glow
+
+					// Enable blending for the glow effect with alpha controlling opacity
+					glEnable(GL_BLEND);
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); // Standard alpha blending
+
+					// Set the alpha value in the starColor uniform (assuming this uniform takes an RGBA)
+					glUniform4f(prog->getUniform("starColor"), 1.0f, 0.6f, 0.0f, doorLightIntensity);
+
+					multiMeshes["cube"].shapes[0]->draw(prog); // Draw the light plane (cube)
+
+					glDisable(GL_BLEND); // Restore OpenGL state
+					prog->unbind(); // unbind normal shader
+
+				Model->popMatrix(); // Pop the light plane transforms
+			Model->popMatrix(); // pop the door transforms
+		}
+
+		// Pop matrix stacks
 		Projection->popMatrix();
 		View->popMatrix();
 	}
@@ -1215,7 +1191,7 @@ void mouseButtonCallbackWrapper(GLFWwindow* window, int button, int action, int 
 }
 
 int main(int argc, char *argv[]) {
-	std::string resourceDir = "../resources";	// Where the resources are loaded from
+	std::string resourceDir = "../resources";
 
 	if (argc >= 2) {
 		resourceDir = argv[1];
@@ -1235,17 +1211,17 @@ int main(int argc, char *argv[]) {
 	application->init(resourceDir);
 	application->initGeom(resourceDir);
 	application->initTex(resourceDir);
-	application->initGround();										// code to load in the ground plane (CPU defined data passed to GPU)
+	application->initGround();
 	application->initFoliage();
 	application->initStars();
 	application->initNature();
 	application->initRocks();
 
-	while (! glfwWindowShouldClose(windowManager->getHandle())) {	// Loop until the user closes the window.
-		application->render();										// Render scene
-		glfwSwapBuffers(windowManager->getHandle());				// Swap front and back buffers
-		glfwPollEvents();											// Poll for and process events
+	while (! glfwWindowShouldClose(windowManager->getHandle())) { // Loop until the user closes the window.
+		application->render(); // Render scene
+		glfwSwapBuffers(windowManager->getHandle()); // Swap front and back buffers
+		glfwPollEvents(); // Poll for and process events
 	}
-	windowManager->shutdown();										// Quit program
+	windowManager->shutdown(); // Quit program
 	return 0;
 }

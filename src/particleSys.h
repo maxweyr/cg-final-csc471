@@ -39,10 +39,6 @@ private:
 	mat4 theCamera;
 	unsigned vertArrObj;
 	unsigned vertBuffObj;
-	vec3 emitterPos; // New member for the emitter (door) position
-	// For 300 particles with RGBA (4 floats per particle)
-	GLfloat pointColors[300 * 4];
-	unsigned colorBuffObj;  // New GPU buffer for particle colors
 	
 public:
 	particleSys(vec3 source);
@@ -51,7 +47,6 @@ public:
 	void update();
 	void reSet();
 	void setCamera(mat4 inC) {theCamera = inC;}
-	void setEmitter(const vec3& pos);
 };
 
 
