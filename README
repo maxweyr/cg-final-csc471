@@ -1,11 +1,11 @@
 What I've accomplished since project 4:
 
-- research! aka reddit arguments about better techniques and stack overflow arguments about what math is 	better
+- research! aka reddit arguments about better techniques and stack overflow arguments about what math is better
 - refined stars:
-	A Fibonacci spherical distribution was used to place the stars in a more appealing way. The animation 	applies a simple sine wave to make each star "pulse" slightly in size over time, with randomized
-	frequencies and phases so they don't all pulse in sync. Another simple sine wave was used to make the 	stars fade in and out by altering their alpha values within the fragment shader. The moon had its 	depth testing changed so that it is always drawn on top of the stars.
+	A Fibonacci spherical distribution was used to place the stars in a more appealing way. The animation applies a simple sine wave to make each star "pulse" slightly in size over time, with randomized
+	frequencies and phases so they don't all pulse in sync. Another simple sine wave was used to make the stars fade in and out by altering their alpha values within the fragment shader. The moon had its depth testing changed so that it is always drawn on top of the stars.
 - removed lighting from shadows and assigned them a flat color in order to get rid of the flickering
-- edited tree placements to leave a 'corridor' between the door and the center of the scene, leaving the door 	always visible
+- edited tree placements to leave a 'corridor' between the door and the center of the scene, leaving the door always visible
 - particle system debugging!!! why is this broken lol. prob time to refactor
 
 Next Steps:
