@@ -13,6 +13,7 @@ out vec3 fragNor;
 out vec3 lightDir;
 out vec3 EPos;
 out vec2 vTexCoord;
+out vec3 fragWorldPos;
 
 void main() {
 
@@ -26,4 +27,5 @@ void main() {
   
   /* pass through the texture coordinates to be interpolated */
   vTexCoord = vertTex;
+  fragWorldPos = vec3(M * vec4(vertPos.xyz, 1.0)); // World position
 }

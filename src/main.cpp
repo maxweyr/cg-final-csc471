@@ -39,7 +39,7 @@ public:
 	WindowManager * windowManager = nullptr;
 
 	// shader programs
-	std::shared_ptr<Program> prog, texProg;
+	std::shared_ptr<Program> prog, texProg, waterProg;
 
 	// geometry
 	std::vector<std::shared_ptr<Shape>> meshes;
@@ -62,10 +62,15 @@ public:
 	// ground VAO
 	GLuint GroundVertexArrayID;
 
+	// global data for water
+	GLuint WaterVAO, WaterVBO, WaterEBO, WaterIBO;
+	int waterIndexCount;
+
 	// textures
 	shared_ptr<Texture> groundTex; // Ground texture
 	shared_ptr<Texture> skyTex; // Sky texture
 	shared_ptr<Texture> doorTex; // brick texture
+	shared_ptr<Texture> basinTex; // Sandy texture for the basin
 
 	// camera variables
 	float phi = 0.0f;								// Pitch angle in radians
@@ -229,7 +234,6 @@ public:
 		glClearColor(.72f, .84f, 1.06f, 1.0f);		// set background color
 		glEnable(GL_DEPTH_TEST);					// enable z-buffer test
 
-		// Initialize the GLSL program that we will use for local shading
 		prog = make_shared<Program>();
 		prog->setVerbose(true);
 		prog->setShaderNames(resourceDirectory + "/simple_vert.glsl", resourceDirectory + "/simple_frag.glsl");
@@ -257,7 +261,6 @@ public:
 		prog->addAttribute("vertNor");
 		prog->addAttribute("vertTex");
 
-		// Initialize the GLSL program that we will use for texture mapping
 		texProg = make_shared<Program>();
 		texProg->setVerbose(true);
 		texProg->setShaderNames(resourceDirectory + "/tex_vert.glsl", resourceDirectory + "/tex_frag.glsl");
@@ -266,12 +269,26 @@ public:
 		texProg->addUniform("V");
 		texProg->addUniform("M");
 		texProg->addUniform("flip");
+		texProg->addUniform("ground");
+		texProg->addUniform("basin");
 		texProg->addUniform("Texture");
 		texProg->addUniform("MatShine");
 		texProg->addUniform("lightPos");
 		texProg->addAttribute("vertPos");
 		texProg->addAttribute("vertNor");
 		texProg->addAttribute("vertTex");
+
+		waterProg = make_shared<Program>();
+		waterProg->setVerbose(true);
+		waterProg->setShaderNames(resourceDirectory + "/water_vert.glsl", resourceDirectory + "/water_frag.glsl");
+		waterProg->init();
+		waterProg->addUniform("P");
+		waterProg->addUniform("V");
+		waterProg->addUniform("M");
+		waterProg->addUniform("uTime");
+		waterProg->addUniform("lightPos");
+		waterProg->addUniform("viewPos");
+		waterProg->addAttribute("aPos");
 	}
 
 	void initGeom(const std::string& resourceDirectory) {
@@ -602,49 +619,6 @@ public:
 		foliagePlacements[foliageKey] = placements;
 	}
 
-	//void initNature() {
-	//	std::string natureKey = "natureCollection";
-	//	if (multiMeshes.find(natureKey) == multiMeshes.end()) {
-	//		std::cerr << "Nature collection not loaded." << std::endl;
-	//		return;
-	//	}
-	//	MultiMesh& nature = multiMeshes[natureKey];
-	//	vector<vector<glm::mat4>> placements;	// prepare a container for the placements
-	//	placements.resize(3);					// one vector per tree type
-
-	//	// define inner and outer radii for annular region
-	//	float rInner = 4.0f * sphereRadius * multiMeshes["sphereWTex"].scale / 3.0f;
-	//	float rOuter = 2.0f * sphereRadius * multiMeshes["sphereWTex"].scale - 5.0f;
-
-	//	// Set up random generators.
-	//	std::default_random_engine rng(std::random_device{}());
-	//	std::uniform_real_distribution<float> rDist(rInner, rOuter);
-	//	std::uniform_real_distribution<float> thetaDist(0.0f, glm::two_pi<float>());
-	//	std::uniform_int_distribution<int> countDistT(50, 70);						// random number of trees
-	//	std::uniform_int_distribution<int> countDistLS(10, 20);						// random number of stumps and logs
-	//	std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>());	// random rotation
-
-	//	for (int i = 0; i < 3; i++) {												// range of placements per type
-	//		int instanceCount = i < 1 ? countDistT(rng) : countDistLS(rng);
-	//		placements[i].resize(instanceCount);
-	//		for (int j = 0; j < instanceCount; j++) {
-	//			// choose a random radius and angle within the annular region
-	//			float r = rDist(rng);
-	//			float theta = thetaDist(rng);
-	//			float x = r * cos(theta);
-	//			float z = r * sin(theta);
-	//			float y = -1.25f;													// fix the vertical position
-	//			float angle = rotDist(rng);											// Random rotation about Y.
-	//			glm::mat4 model = glm::translate(glm::mat4(1.0f),
-	//				glm::vec3(x, y, z));											// build model matrix and set translation
-	//			model = glm::rotate(model, angle, glm::vec3(0, 1, 0));				// set random rotation
-	//			model = glm::scale(model, 5.0f * glm::vec3(1, 1, 1));				// set scale
-	//			placements[i][j] = model;
-	//		}
-	//	}
-	//	treePlacements[natureKey] = placements;
-	//}
-
 	void Application::initNature() {
 		std::string natureKey = "natureCollection";
 		if (multiMeshes.find(natureKey) == multiMeshes.end()) {
@@ -675,7 +649,7 @@ public:
 		// Calculate door-to-center direction vector
 		glm::vec3 doorToCenter = glm::normalize(centerPos - doorPos);
 
-		float corridorWidth = 1.0f; // Width of clear path
+		float corridorWidth = 2.0f; // Width of clear path
 
 		for (int i = 0; i < 3; i++) { // range of placements per type
 			int instanceCount = i < 1 ? countDistT(rng) : countDistLS(rng);
@@ -733,7 +707,7 @@ public:
 		vector<string> rockKeys = { "rock1", "rock2", "rock3", "rock4", "rock5" };
 
 		// define inner and outer radii for annular region
-		float rInner = 4.0f * sphereRadius * multiMeshes["sphereWTex"].scale / 3.0f;
+		float rInner = 5.25f;
 		float rOuter = 2.0f * sphereRadius * multiMeshes["sphereWTex"].scale;
 
 		// Set up random generators.
@@ -760,6 +734,7 @@ public:
 				float theta = thetaDist(rng);
 				float x = r * cos(theta);
 				float z = r * sin(theta);
+
 				glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(x, rockYOffset, z));	// build the model matrix and translate
 				model = glm::rotate(model, rotDist(rng), glm::vec3(0, 1, 0));	// apply a random rotation about the Y axis
 				model = glm::scale(model, glm::vec3(scaleDist(rng)));			// apply random scaling
@@ -767,6 +742,59 @@ public:
 			}
 			rockPlacements[rockKey] = placements;
 		}
+	}
+
+	void initRingRocks() {
+		vector<string> rockKeys = { "rock1", "rock2", "rock3", "rock4", "rock5" };
+
+		// Define parameters for the rock ring
+		float basinRadius = 5.0f; // Same as holeRadius in initWaterSurface
+		float ringRadius = basinRadius - 0.1f; // Slightly smaller than the water basin
+		int numRocks = 100; // Number of rocks to place around the ring
+
+		// Set up random generators for variation
+		std::default_random_engine rng(std::random_device{}());
+		std::uniform_real_distribution<float> radiusVariation(-0.2f, 0.2f); // Small variation in radius
+		std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>()); // Random rotation
+		std::uniform_real_distribution<float> scaleDist(0.8f, 1.3f); // Random scaling
+		std::uniform_real_distribution<float> heightDist(-0.1f, 0.1f); // Small height variation
+		std::uniform_int_distribution<int> rockTypeDist(0, rockKeys.size() - 1); // Random rock type
+
+		for (int i = 0; i < numRocks; i++) {
+			// Choose a random rock type from the available ones
+			string rockKey = rockKeys[rockTypeDist(rng)];
+			if (multiMeshes.find(rockKey) == multiMeshes.end())
+				continue;
+
+			auto rockShape = multiMeshes[rockKey].shapes[0];
+			float rockYOffset = -1.5f - rockShape->min.y; // Y offset
+
+			// Calculate position around the circle
+			float angle = (float)i / numRocks * glm::two_pi<float>();
+			float r = ringRadius + radiusVariation(rng); // Add small variation to radius
+			float x = r * cos(angle);
+			float z = r * sin(angle);
+			float y = rockYOffset + heightDist(rng); // Add small height variation
+
+			// Create model matrix with translation, rotation and scaling
+			glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z));
+			model = glm::rotate(model, rotDist(rng), glm::vec3(0, 1, 0)); // Random Y rotation
+
+			// Add small random rotations on X and Z for more natural look
+			model = glm::rotate(model, radiusVariation(rng) * 0.3f, glm::vec3(1, 0, 0));
+			model = glm::rotate(model, radiusVariation(rng) * 0.3f, glm::vec3(0, 0, 1));
+
+			// Apply scaling - smaller scale for a decorative ring
+			float scale = scaleDist(rng) * 0.7f; // Smaller scale than the other scattered rocks
+			model = glm::scale(model, glm::vec3(scale));
+
+			// Add this placement to rock placements
+			if (rockPlacements.find(rockKey) == rockPlacements.end()) {
+				rockPlacements[rockKey] = vector<glm::mat4>();
+			}
+			rockPlacements[rockKey].push_back(model);
+		}
+		std::cout << "Added ring of rocks around water basin" << std::endl;
 	}
 
 	// code to load in the new textures
@@ -781,13 +809,70 @@ public:
 		skyTex->setFilename(resourceDirectory + "/starSky.jpg");
 		skyTex->init();
 		skyTex->setUnit(1);
-		skyTex->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+		skyTex->setWrapModes(GL_REPEAT, GL_REPEAT);
 
 		doorTex = make_shared<Texture>();
 		doorTex->setFilename(resourceDirectory + "/stone_bricks_2k.jpg");
 		doorTex->init();
 		doorTex->setUnit(2);
 		doorTex->setWrapModes(GL_REPEAT, GL_REPEAT);
+
+		basinTex = make_shared<Texture>();
+		basinTex->setFilename(resourceDirectory + "/sand_2k.jpg");
+		basinTex->init();
+		basinTex->setUnit(4);
+		basinTex->setWrapModes(GL_REPEAT, GL_REPEAT);
+	}
+
+	void initWaterSurface(float radius) {
+		// Create a flat circular plane for the water
+		std::vector<float> positions;
+		std::vector<unsigned int> indices;
+
+		int segments = 32;
+
+		// Center vertex
+		positions.push_back(0.0f); // x
+		positions.push_back(-1.35f); // y (slightly below ground level)
+		positions.push_back(0.0f); // z
+
+		// Edge vertices
+		for (int i = 0; i <= segments; i++) {
+			float angle = 2.0f * glm::pi<float>() * i / segments;
+			float x = radius * cos(angle);
+			float z = radius * sin(angle);
+
+			positions.push_back(x);
+			positions.push_back(-1.25f); // Same level as hole in ground
+			positions.push_back(z);
+		}
+
+		// Create triangles with center as one vertex
+		for (int i = 1; i <= segments; i++) {
+			indices.push_back(0); // Center
+			indices.push_back(i);
+			indices.push_back(i + 1 > segments ? 1 : i + 1);
+		}
+
+		// Create VAO and VBO
+		glGenVertexArrays(1, &WaterVAO);
+		glBindVertexArray(WaterVAO);
+
+		glGenBuffers(1, &WaterVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, WaterVBO);
+		glBufferData(GL_ARRAY_BUFFER, positions.size() * sizeof(float), positions.data(), GL_STATIC_DRAW);
+
+		glGenBuffers(1, &WaterIBO);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, WaterIBO);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+
+		waterIndexCount = indices.size();
+
+		// Position attribute
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+		glBindVertexArray(0);
 	}
 
 	//directly pass quad for the ground to the GPU
@@ -836,14 +921,16 @@ public:
       	glGenBuffers(1, &GIndxBuffObj);
      	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GIndxBuffObj);
       	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(idx), idx, GL_STATIC_DRAW);
-      }
+	}
 
-      //code to draw the ground plane
-     void drawGround(shared_ptr<Program> curS) {
-     	curS->bind();
-     	glBindVertexArray(GroundVertexArrayID);
-     	groundTex->bind(curS->getUniform("Texture"));
-		//draw the ground plane 
+    // code to draw the ground plane
+    void drawGround(shared_ptr<Program> curS) {
+		curS->bind();
+		glBindVertexArray(GroundVertexArrayID);
+		glUniform1i(curS->getUniform("ground"), 5); // enable the hole
+		glUniform1i(curS->getUniform("basin"), 0);  // normal drawing mode
+		groundTex->bind(curS->getUniform("Texture"));
+		//draw the ground plane
   		SetModel(vec3(0, -1, 0), 0, 0, 1, curS);
   		glEnableVertexAttribArray(0);
   		glBindBuffer(GL_ARRAY_BUFFER, GrndBuffObj);
@@ -864,8 +951,40 @@ public:
   		glDisableVertexAttribArray(0);
   		glDisableVertexAttribArray(1);
   		glDisableVertexAttribArray(2);
-  		curS->unbind();
-     }
+		glUniform1i(curS->getUniform("ground"), 0); // disable the hole
+
+		// Draw the basin (half-sphere) below the hole
+		string sphereKey = "sphereWTex";
+		if (multiMeshes.find(sphereKey) != multiMeshes.end() && !multiMeshes[sphereKey].shapes.empty()) {
+			// Switch to the sandy texture
+			basinTex->bind(curS->getUniform("Texture"));
+
+			// Position and scale the basin
+			float basinDepth = 2.0f;
+			float holeRadius = 5.0f;
+
+			mat4 basinModel = glm::translate(glm::mat4(1.0f), vec3(0, -1.25f, 0));
+
+			// Scale the sphere to match the hole radius
+			float scaleXZ = holeRadius / multiMeshes[sphereKey].shapes[0]->max.x;
+			basinModel = glm::scale(basinModel, vec3(scaleXZ, scaleXZ, scaleXZ));
+
+			// Set model matrix for the basin
+			glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(basinModel));
+
+			glUniform1i(curS->getUniform("basin"), 1);	// Enable basin drawing mode (clip above ground)
+			glUniform1i(curS->getUniform("ground"), 0); // No hole for basin
+			glUniform1i(curS->getUniform("flip"), 1);   // Flip normals
+
+			multiMeshes[sphereKey].shapes[0]->draw(curS); // Draw the basin
+
+			// Reset uniforms
+			glUniform1i(curS->getUniform("basin"), 0);
+			glUniform1i(curS->getUniform("flip"), 0);
+		}
+
+  		curS->unbind(); // unbind shader
+    }
 
      //helper function to pass material data to the GPU
 	void SetMaterial(shared_ptr<Program> curS, int i) {
@@ -1000,9 +1119,6 @@ public:
 		float moonRadius = sqrt(R * R - moonY * moonY);
 		glm::vec3 moonCenter = (multiMeshes["spaceKit"].shapes[1]->max + multiMeshes["spaceKit"].shapes[1]->min) * 0.5f;
 		glm::vec3 moonLightPos = glm::vec3(moonRadius * cos(angle), moonY, moonRadius * sin(angle));
-		// FOR WHATEVER REASON THE BOUNDING BOX LIED AND I HAD TO DO THIS BY HAND
-		moonCenter.z += 16.0f;
-		moonCenter.x += 2.5f;
 		glm::vec3 moonPos = moonLightPos - moonCenter;
 
 		// If tour mode is active, update the spline and set the eye position
@@ -1039,6 +1155,8 @@ public:
 		glUniformMatrix4fv(texProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
 		glUniform3f(texProg->getUniform("lightPos"), moonLightPos.x, moonLightPos.y, moonLightPos.z);
 		glUniform1f(texProg->getUniform("MatShine"), 3.0);
+		glUniform1i(texProg->getUniform("ground"), 0); // disable the hole
+		glUniform1i(texProg->getUniform("basin"), 0);
 
 		glDepthFunc(GL_LEQUAL);										// set the depth function to always draw the sphere!
 		modelKey = "sphereWTex";									// sphere mesh for background
@@ -1057,7 +1175,6 @@ public:
 		glDepthFunc(GL_LESS);										// set the depth test back to normal!
 
 		drawGround(texProg);										// draw ground wrapper
-
 		texProg->unbind();
 
 		prog->bind();												// load the simple shader (no texture)
@@ -1232,6 +1349,8 @@ public:
 				glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
 				glUniform3f(texProg->getUniform("lightPos"), moonLightPos.x, moonLightPos.y, moonLightPos.z);
 				glUniform1f(texProg->getUniform("MatShine"), 10.0);
+				glUniform1i(texProg->getUniform("ground"), 0); // disable the hole
+				glUniform1i(texProg->getUniform("basin"), 0);
 
 				doorTex->bind(texProg->getUniform("Texture")); // Create texture for the door
 
@@ -1314,6 +1433,40 @@ public:
 			Model->popMatrix(); // pop the door transforms
 		}
 
+		//============
+		// draw water
+		//============
+		waterProg->bind();
+		glUniformMatrix4fv(waterProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(waterProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
+
+		Model->pushMatrix();
+			Model->loadIdentity();
+			// Position at the center of the scene, slightly above ground
+			Model->translate(vec3(0.0f, -0.24f, 0.0f));
+			glUniformMatrix4fv(waterProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
+
+			// Pass time for animation
+			glUniform1f(waterProg->getUniform("uTime"), currentTime);
+			// Pass light position and view position for reflections
+			glUniform3f(waterProg->getUniform("lightPos"), moonLightPos.x, moonLightPos.y, moonLightPos.z);
+			glUniform3f(waterProg->getUniform("viewPos"), eye.x, eye.y, eye.z);
+
+			// Enable blending for transparency
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+			// Draw the water surface
+			glBindVertexArray(WaterVAO);
+			glDrawElements(GL_TRIANGLES, waterIndexCount, GL_UNSIGNED_INT, 0);
+			glBindVertexArray(0);
+
+			// Disable blending
+			glDisable(GL_BLEND);
+
+		Model->popMatrix();
+		waterProg->unbind();
+
 		// Pop matrix stacks
 		Projection->popMatrix();
 		View->popMatrix();
@@ -1358,10 +1511,12 @@ int main(int argc, char *argv[]) {
 	application->initTex(resourceDir);
 	application->initParticleSystem(resourceDir);
 	application->initGround();
+	application->initWaterSurface(5.0f);
 	application->initFoliage();
 	application->initStars();
 	application->initNature();
 	application->initRocks();
+	application->initRingRocks();
 
 	while (! glfwWindowShouldClose(windowManager->getHandle())) { // Loop until the user closes the window.
 		application->render(); // Render scene
