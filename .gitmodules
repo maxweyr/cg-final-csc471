@@ -1,0 +1,3 @@
+[submodule "ext/extern/assimp"]
+	path = ext/extern/assimp
+	url = https://github.com/assimp/assimp.git

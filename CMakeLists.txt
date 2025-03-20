@@ -18,9 +18,19 @@ file(GLOB_RECURSE GLSL "resources/*.glsl")
 
 include_directories("ext")
 include_directories("ext/glad/include")
+include_directories("ext/assimp/include")  # Path to Assimp include directory
 
 # Set the executable.
 add_executable(${CMAKE_PROJECT_NAME} ${SOURCES} ${HEADERS} ${GLSL})
+
+# Link with the pre-built Assimp library
+if(WIN32)
+  target_link_libraries(${CMAKE_PROJECT_NAME} "${CMAKE_SOURCE_DIR}/ext/assimp/lib/assimp-vc143-mt.lib")
+  # If using Debug configuration, you might need this instead:
+  # target_link_libraries(${CMAKE_PROJECT_NAME} "${CMAKE_SOURCE_DIR}/ext/assimp/lib/assimp-vc143-mtd.lib")
+else()
+  target_link_libraries(${CMAKE_PROJECT_NAME} "${CMAKE_SOURCE_DIR}/ext/assimp/lib/libassimp.a")
+endif()
 
 # Helper function included from FindGfxLibs.cmake
 findGLFW3(${CMAKE_PROJECT_NAME})
@@ -28,7 +38,6 @@ findGLM(${CMAKE_PROJECT_NAME})
 
 # OS specific options and libraries
 if(NOT WIN32)
-
   message(STATUS "Adding GCC style compiler flags")
   add_compile_options("-Wall")
   add_compile_options("-pedantic")
@@ -42,10 +51,15 @@ if(NOT WIN32)
     #Link the Linux OpenGL library
     target_link_libraries(${CMAKE_PROJECT_NAME} "GL" "dl")
   endif()
-
 else()
-
   # Link OpenGL on Windows
   target_link_libraries(${CMAKE_PROJECT_NAME} opengl32.lib)
+endif()
 
+# Copy required DLLs to the binary directory
+if(WIN32)
+  add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_SOURCE_DIR}/ext/assimp/bin/assimp-vc143-mt.dll"
+      $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>)
 endif()

@@ -1,8 +1,6 @@
-﻿/*
- * Program 4 base code - includes modifications to shape and initGeom in preparation to load
- * multi shape objects
- * CPE 471 Cal Poly Z. Wood + S. Sueda + I. Dunn
+﻿/* Final Project
  * Max Eyrich
+ * Built off P4 base code - Cal Poly Z. Wood + S. Sueda + I. Dunn
  */
 
 #include <iostream>
@@ -25,11 +23,11 @@
 #include "Bezier.h"
 #include "Spline.h"
 #include "particleSys.h"
-
+#include "FBXModel.h"
 #define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
 #include <experimental/filesystem>
-namespace fs = std::experimental::filesystem;
 
+namespace fs = std::experimental::filesystem;
 using namespace std;
 using namespace glm;
 
@@ -49,7 +47,13 @@ public:
 		float scale; // Uniform scale for multimesh objects
 	};
 
-	unordered_map<string, MultiMesh> multiMeshes;  // Store multi-mesh objects
+	unordered_map<string, MultiMesh> multiMeshes; // Store multi-mesh objects
+
+	// wolf data
+	std::shared_ptr<Program> animShader;
+	FBXModel* wolfModel;
+	float lastTime;
+	float wolfSpeed;
 
 	// containers for static placements
 	std::vector<glm::mat4> starPlacements;
@@ -86,11 +90,12 @@ public:
 	bool tourEnabled = false;              // Flag to indicate tour mode
 	Spline* cameraTour = nullptr;          // Pointer to a spline for the tour
 	glm::vec3 tourLookAt = glm::vec3(0.0f, 0.0f, 0.0f); // Fixed look-at point for the tour
-	float tourDuration = 10.0f;            // Duration (in seconds) for the tour
+	float tourDuration = 15.0f;            // Duration (in seconds) for the tour
 	float lastTourUpdateTime = 0.0f;       // For computing delta time in tour mode
 
 	float groundSize = 20.0f;
 	float sphereRadius = groundSize / 2.0f;
+	float sphereEdge;
 
 	// star perameters
 	int numStars = 100;						// number of stars
@@ -119,35 +124,32 @@ public:
 
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
-		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {	// exit the program when 'ESC' is pressed
+		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) { // exit the program when 'ESC' is pressed
 			glfwSetWindowShouldClose(window, GL_TRUE);
 		}
-
-		if (key == GLFW_KEY_G && action == GLFW_PRESS) {		// toggle cinematic tour when 'g' is pressed
-			if (!tourEnabled) {									// start tour
-				tourLookAt = glm::vec3(0.0f, 0.0f, 0.0f);		// fix the look-at point
-				glm::vec3 start = vec3(15, 5, 0);							// use current eye position as the start of the tour
-				glm::vec3 control = start +
-					glm::vec3(0.0f, 5.0f, 15.0f);				// choose a control point to create a nice arc
-				glm::vec3 end = glm::vec3(-15.0f, 5.0f, 0.0f);	// end point (destination) for camera to travel to
+		if (key == GLFW_KEY_G && action == GLFW_PRESS) { // toggle cinematic tour when 'g' is pressed
+			if (!tourEnabled) {	// start tour
+				tourLookAt = glm::vec3(0.0f, 0.0f, 0.0f); // fix the look-at point
+				glm::vec3 start = vec3(0, 7.0f, sphereEdge); // start tour above doorPos
+				glm::vec3 control = start + glm::vec3(sphereEdge, 3.0f, 0.0f); // choose a control point to create a nice arc
+				glm::vec3 end = glm::vec3(0.0f, 7.0f, -sphereEdge); // end point (destination) for camera to travel to
 				cameraTour = new Spline(start, control,
-					end, tourDuration);							// create a quadratic spline (order2) that takes tourDuration seconds
+					end, tourDuration); // create a quadratic spline (order2) that takes tourDuration seconds
 				tourEnabled = true;
-				lastTourUpdateTime = glfwGetTime();				// reset timer for the spline update
+				lastTourUpdateTime = glfwGetTime(); // reset timer for the spline update
 			} else {
-				tourEnabled = false;							// turn off tour mode
+				tourEnabled = false; // turn off tour mode
 				if (cameraTour) {
 					delete cameraTour;
 					cameraTour = nullptr;
 				}
-				theta = glm::pi<float>();						// reset camera parameters for manual control
+				theta = glm::pi<float>(); // reset camera parameters for manual control
 				phi = 0.0f;
 				radius = 15.0f;
 				updateLookAt();
 			}
 		}
-
-		if (!tourEnabled) {										// if not in tour mode allow manual movement
+		if (!tourEnabled) {	// if not in tour mode allow manual movement
 			if (action == GLFW_PRESS || action == GLFW_REPEAT) {
 				glm::vec3 forward = glm::normalize(lookAt - eye);
 				glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
@@ -162,18 +164,26 @@ public:
 				updateLookAt();
 			}
 		}
-
-		if (key == GLFW_KEY_Q && action == GLFW_PRESS) {			// move light source left when 'q' pressed
-			lightTrans -= 0.5;
-		}
-		if (key == GLFW_KEY_E && action == GLFW_PRESS) {			// move light source right when 'e' pressed
-			lightTrans += 0.5;
-		}
-		if (key == GLFW_KEY_Z && action == GLFW_PRESS) {			// geometry view when 'z' pressed
+		if (key == GLFW_KEY_Z && action == GLFW_PRESS) { // geometry view when 'z' pressed
 			glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 		}
-		if (key == GLFW_KEY_Z && action == GLFW_RELEASE) {			// undo geometry view when 'z' released
+		if (key == GLFW_KEY_Z && action == GLFW_RELEASE) { // undo geometry view when 'z' released
 			glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+		}
+		if (key == GLFW_KEY_N && action == GLFW_PRESS) { // Switch to next wolf animation
+			int nextAnim = (wolfModel->getCurrentAnimation() + 1) % wolfModel->getAnimationCount();
+			wolfModel->setAnimation(nextAnim);
+		}
+		if (key == GLFW_KEY_P && action == GLFW_PRESS) { // Switch to previous animation
+			int prevAnim = wolfModel->getCurrentAnimation() - 1;
+			if (prevAnim < 0) prevAnim = wolfModel->getAnimationCount() - 1;
+			wolfModel->setAnimation(prevAnim);
+		}
+		if (key == GLFW_KEY_0 && action == GLFW_PRESS && mods == GLFW_MOD_CONTROL) { // Print out all animation names
+			std::cout << "Available animations:" << std::endl;
+			for (int i = 0; i < wolfModel->getAnimationCount(); i++) {
+				std::cout << "  " << i << ": " << wolfModel->getAnimationName(i) << std::endl;
+			}
 		}
 	}
 
@@ -289,16 +299,45 @@ public:
 		waterProg->addUniform("lightPos");
 		waterProg->addUniform("viewPos");
 		waterProg->addAttribute("aPos");
+
+		// Initialize animation shader
+		animShader = make_shared<Program>();
+		animShader->setVerbose(true);
+		animShader->setShaderNames(resourceDirectory + "/anim_vert.glsl", resourceDirectory + "/anim_frag.glsl");
+		animShader->init();
+		animShader->addUniform("P");
+		animShader->addUniform("V");
+		animShader->addUniform("M");
+		animShader->addUniform("MatAmb");
+		animShader->addUniform("MatDif");
+		animShader->addUniform("MatSpec");
+		animShader->addUniform("MatShine");
+		animShader->addUniform("lightPos");
+
+		// Add uniforms for bone transforms
+		for (int i = 0; i < 100; i++) {
+			animShader->addUniform("boneTransforms[" + std::to_string(i) + "]");
+		}
+
+		animShader->addAttribute("vertPos");
+		animShader->addAttribute("vertNor");
+		animShader->addAttribute("vertTex");
+		animShader->addAttribute("boneIDs");
+		animShader->addAttribute("weights");
+		animShader->addUniform("hasTexture");
+		animShader->addUniform("textureSampler");
+
+		// Create the wolf model
+		wolfModel = new FBXModel();
+		lastTime = glfwGetTime();
 	}
 
 	void initGeom(const std::string& resourceDirectory) {
 		// mesh objects to target
 		vector<string> multiMeshFiles = {
-			"castleDoor.obj",
 			"foliageCollection.obj",
 			"moon.obj",
 			"natureCollection.obj",
-			"pottedFern.obj",
 			"rock1.obj",
 			"rock2.obj",
 			"rock3.obj",
@@ -588,12 +627,12 @@ public:
 		placements.resize(foliage.shapes.size());	// one vector per plant type
 
 		// define inner and outer radii for annular region
-		float rInner = sphereRadius * multiMeshes["sphereWTex"].scale / 2.0f;
+		float rInner = 5.5f;
 		float rOuter = sphereRadius * multiMeshes["sphereWTex"].scale * 2.0f;
 
 		// setup random number generators
 		std::default_random_engine rng(std::random_device{}());
-		std::uniform_int_distribution<int> countDist(50, 100);						// random range of plants per type
+		std::uniform_int_distribution<int> countDist(100, 300);						// random range of plants per type
 		std::uniform_real_distribution<float> thetaDist(0.0f, glm::two_pi<float>());
 		std::uniform_real_distribution<float> rDist(rInner, rOuter);				// random radius
 		std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>());	// random rotation about Y
@@ -642,14 +681,13 @@ public:
 		std::uniform_real_distribution<float> rotDist(0.0f, glm::two_pi<float>());  // random rotation
 
 		// Define door position and the path that should be kept clear
-		float sphereEdge = sphereRadius * multiMeshes["sphereWTex"].scale * 2.0f;
-		glm::vec3 doorPos(0, -1.25f, sphereEdge - 1.0f); // Door position
+		glm::vec3 doorPos(0, -1.25f, sphereEdge); // Door position
 		glm::vec3 centerPos(0, -1.25f, 0); // Center of the scene
 
 		// Calculate door-to-center direction vector
-		glm::vec3 doorToCenter = glm::normalize(centerPos - doorPos);
+		glm::vec3 doorToCenter = glm::vec3(0, 0, -1.0f);
 
-		float corridorWidth = 2.0f; // Width of clear path
+		float corridorWidth = 0.0f; // Width of clear path
 
 		for (int i = 0; i < 3; i++) { // range of placements per type
 			int instanceCount = i < 1 ? countDistT(rng) : countDistLS(rng);
@@ -676,7 +714,7 @@ public:
 				float projectionLength = glm::dot(doorToTree, doorToCenter);
 
 				// Only consider trees that are between the door and center (not behind the door)
-				bool inPathDirection = projectionLength > 0 && projectionLength < glm::length(centerPos - doorPos);
+				bool inPathDirection = projectionLength > 0 && projectionLength < sphereEdge;
 
 				// Calculate perpendicular distance from tree to the door-center line
 				glm::vec3 projection = doorPos + doorToCenter * projectionLength;
@@ -797,7 +835,7 @@ public:
 		std::cout << "Added ring of rocks around water basin" << std::endl;
 	}
 
-	// code to load in the new textures
+	// code to load in the textures
 	void initTex(const std::string& resourceDirectory) {
 		groundTex = make_shared<Texture>();
 		groundTex->setFilename(resourceDirectory + "/moss_ground_2k.jpg");
@@ -929,6 +967,7 @@ public:
 		glBindVertexArray(GroundVertexArrayID);
 		glUniform1i(curS->getUniform("ground"), 5); // enable the hole
 		glUniform1i(curS->getUniform("basin"), 0);  // normal drawing mode
+		glUniform1f(texProg->getUniform("MatShine"), 20.0);
 		groundTex->bind(curS->getUniform("Texture"));
 		//draw the ground plane
   		SetModel(vec3(0, -1, 0), 0, 0, 1, curS);
@@ -1154,7 +1193,7 @@ public:
 		glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
 		glUniformMatrix4fv(texProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
 		glUniform3f(texProg->getUniform("lightPos"), moonLightPos.x, moonLightPos.y, moonLightPos.z);
-		glUniform1f(texProg->getUniform("MatShine"), 3.0);
+		glUniform1f(texProg->getUniform("MatShine"), 1.0);
 		glUniform1i(texProg->getUniform("ground"), 0); // disable the hole
 		glUniform1i(texProg->getUniform("basin"), 0);
 
@@ -1335,12 +1374,11 @@ public:
 			Model->pushMatrix();
 				Model->loadIdentity();
 
-				// Position the moonDoor behind starting camera orientation
-				float sphereEdge = sphereRadius * multiMeshes["sphereWTex"].scale * 2.0f;
-				glm::vec3 doorPos(0, -1.25f, sphereEdge - 2.0f);
+				// Position the door on the edge of the scene
+				glm::vec3 doorPos(0, -1.25f, sphereEdge);
 				Model->translate(doorPos);
 
-				Model->scale(vec3(multiMeshes[modelKey].scale)); // Scale appropriate to the scene
+				Model->scale(vec3(multiMeshes[modelKey].scale * 2.0f)); // Scale appropriate to the scene
 				
 				texProg->bind(); // Use texture shader since this will be textured
 
@@ -1467,6 +1505,56 @@ public:
 		Model->popMatrix();
 		waterProg->unbind();
 
+		//===========
+		// draw wolf
+		//===========
+		// Update wolf animation
+		float wolfDeltaTime = currentTime - lastTime;
+		lastTime = currentTime;
+
+		wolfModel->update(wolfDeltaTime);
+
+		// Update wolf position (walking in a circle)
+		float radius = 6.0f;
+		float wolfAngle = currentTime * wolfSpeed;
+
+		// Calculate current position on the circle
+		glm::vec3 wolfPosition;
+		wolfPosition.x = radius * cos(wolfAngle);
+		wolfPosition.y = -1.25f; // Ground level
+		wolfPosition.z = radius * sin(wolfAngle);
+
+		// Calculate direction of movement (tangent to the circle)
+		glm::vec3 direction(-sin(wolfAngle), 0.0f, cos(wolfAngle));
+		direction = glm::normalize(direction);
+
+		// Set wolf position
+		wolfModel->setPosition(wolfPosition);
+
+		// Calculate the rotation angle to face the direction of movement
+		// assumes the wolf's forward direction is +Z
+		float rotationAngle = atan2(direction.x, direction.z) + glm::pi<float>();
+
+		// Set wolf rotation
+		wolfModel->setRotation(rotationAngle);
+
+		// Draw the wolf
+		animShader->bind();
+		glUniformMatrix4fv(animShader->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(animShader->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
+		glUniform3f(animShader->getUniform("MatAmb"), 0.1f, 0.1f, 0.1f);
+		glUniform3f(animShader->getUniform("MatDif"), 0.8f, 0.8f, 0.8f);
+		glUniform3f(animShader->getUniform("MatSpec"), 0.3f, 0.3f, 0.3f);
+		glUniform1f(animShader->getUniform("MatShine"), 32.0f);
+		glUniform3f(animShader->getUniform("lightPos"), moonLightPos.x, moonLightPos.y, moonLightPos.z);
+
+		// Important: Initialize the texture uniforms
+		glUniform1i(animShader->getUniform("hasTexture"), 0); // Will be set to 1 inside draw method if textures exist
+		glUniform1i(animShader->getUniform("textureSampler"), 0); // Use texture unit 0
+
+		wolfModel->draw(animShader);
+		animShader->unbind();
+
 		// Pop matrix stacks
 		Projection->popMatrix();
 		View->popMatrix();
@@ -1517,6 +1605,63 @@ int main(int argc, char *argv[]) {
 	application->initNature();
 	application->initRocks();
 	application->initRingRocks();
+
+	if (application->wolfModel->loadModel(resourceDir + "/models/wolf.fbx")) {
+		application->wolfModel->setScale(0.025f);
+
+		// Start with animation 1 (hide|walk) and the appropriate speed
+		application->wolfModel->setAnimation(1);
+		application->wolfSpeed = 0.065;
+
+		// Set materials for each mesh based on Blender materials
+		// Mesh 0: Body (dark grey/brown fur)
+		application->wolfModel->setMeshMaterial(0,
+			glm::vec3(0.13f, 0.10f, 0.08f),  // Ambient
+			glm::vec3(0.60f, 0.45f, 0.35f),  // Diffuse
+			glm::vec3(0.3f, 0.3f, 0.3f),     // Specular
+			16.0f);                          // Shininess
+
+		// Mesh 1: Face/head (slightly lighter)
+		application->wolfModel->setMeshMaterial(1,
+			glm::vec3(0.14f, 0.11f, 0.09f),  // Ambient
+			glm::vec3(0.65f, 0.50f, 0.40f),  // Diffuse
+			glm::vec3(0.3f, 0.3f, 0.3f),     // Specular
+			16.0f);                          // Shininess
+
+		// Mesh 2: Eyes (dark)
+		application->wolfModel->setMeshMaterial(2,
+			glm::vec3(0.02f, 0.02f, 0.02f),  // Ambient
+			glm::vec3(0.1f, 0.1f, 0.1f),     // Diffuse
+			glm::vec3(0.5f, 0.5f, 0.5f),     // Specular
+			32.0f);                          // Shininess
+
+		// Mesh 3: Inner mouth (reddish)
+		application->wolfModel->setMeshMaterial(3,
+			glm::vec3(0.1f, 0.08f, 0.06f),   // Ambient
+			glm::vec3(0.45f, 0.35f, 0.25f),  // Diffuse
+			glm::vec3(0.3f, 0.3f, 0.3f),     // Specular
+			16.0f);                          // Shininess
+
+		// Mesh 4: Teeth (white)
+		application->wolfModel->setMeshMaterial(4,
+			glm::vec3(0.15f, 0.15f, 0.15f),  // Ambient
+			glm::vec3(0.8f, 0.8f, 0.8f),     // Diffuse
+			glm::vec3(0.5f, 0.5f, 0.5f),     // Specular
+			32.0f);                          // Shininess
+
+		// Mesh 5: Claws/paws (dark)
+		application->wolfModel->setMeshMaterial(5,
+			glm::vec3(0.15f, 0.05f, 0.05f),  // Ambient
+			glm::vec3(0.7f, 0.3f, 0.3f),     // Diffuse
+			glm::vec3(0.2f, 0.2f, 0.2f),     // Specular
+			8.0f);                           // Shininess
+	}
+	else {
+		std::cerr << "Failed to load wolf model!" << std::endl;
+	}
+
+	// compute sphere edge
+	application->sphereEdge = application->sphereRadius * application->multiMeshes["sphereWTex"].scale * 2.0f - 2.0f;
 
 	while (! glfwWindowShouldClose(windowManager->getHandle())) { // Loop until the user closes the window.
 		application->render(); // Render scene
