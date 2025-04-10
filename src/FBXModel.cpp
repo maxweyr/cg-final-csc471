@@ -3,6 +3,7 @@
 #include <iostream>
 #include <glm/gtc/type_ptr.hpp>
 #include "stb_image.h"
+#include <functional>
 
 FBXModel::FBXModel() :
     currentAnimation(0),
