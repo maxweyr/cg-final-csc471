@@ -29,7 +29,7 @@ uniform sampler2D texture_normal1;
 uniform sampler2D texture_height1;  // For parallax mapping if implemented
 uniform sampler2D texture_emissive1;
 
-/*
+
 void main() {
     // Normalize our vectors
     vec3 normal = normalize(fragNor);
@@ -96,9 +96,4 @@ void main() {
     }
     
     color = vec4(result, alpha);
-}
-*/
-
-void main() {
-    color = vec4(1.0, 0.0, 0.0, 1.0);  // Solid red color
 }

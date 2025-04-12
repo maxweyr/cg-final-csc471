@@ -1,4 +1,3 @@
-// Model.cpp
 #include "Model.h"
 #include <iostream>
 #include <glm/gtc/type_ptr.hpp>

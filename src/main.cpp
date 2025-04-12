@@ -8,12 +8,7 @@
 #define _USE_MATH_DEFINES
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-<<<<<<< Updated upstream
-#include "FBXModel.h"
-=======
 #include "Model.h"
-#include "Shape.h"
->>>>>>> Stashed changes
 
 using namespace std;
 using namespace glm;
@@ -33,22 +28,15 @@ public:
 	float groundSize = 20.0f;
 
 	// wolf data
-<<<<<<< Updated upstream
-	FBXModel* wolfModel;
-=======
-	//Model* wolfModel;
-	Shape* wolfModel;
->>>>>>> Stashed changes
+	Model* wolfModel;
+	//Shape* wolfModel;
 	float lastTime;
 	float wolfSpeed = 5.0f;
 	glm::vec3 wolfPosition = glm::vec3(0.0f, 0.0f, 0.0f);
 	float wolfRotation = 0.0f;
-<<<<<<< Updated upstream
-=======
 
 	// plant data
-	Shape* plantModel;
->>>>>>> Stashed changes
+	//Shape* plantModel;
 
 	// camera variables
 	float phi = 0.0f;                               // Pitch angle in radians
@@ -200,12 +188,6 @@ public:
 		animProg->addUniform("P");
 		animProg->addUniform("V");
 		animProg->addUniform("M");
-<<<<<<< Updated upstream
-		animProg->addUniform("MatAmb");
-		animProg->addUniform("MatDif");
-		animProg->addUniform("MatSpec");
-		animProg->addUniform("MatShine");
-=======
 
 		// Material uniforms
 		animProg->addUniform("material.ambient");
@@ -216,7 +198,7 @@ public:
 		animProg->addUniform("material.opacity");
 		animProg->addUniform("material.hasTexture");
 
->>>>>>> Stashed changes
+
 		animProg->addUniform("lightPos");
 
 		// Add uniforms for bone transforms
@@ -224,15 +206,6 @@ public:
 			animProg->addUniform("boneTransforms[" + std::to_string(i) + "]");
 		}
 
-<<<<<<< Updated upstream
-		animProg->addAttribute("vertPos");
-		animProg->addAttribute("vertNor");
-		animProg->addAttribute("vertTex");
-		animProg->addAttribute("boneIDs");
-		animProg->addAttribute("weights");
-		animProg->addUniform("hasTexture");
-		animProg->addUniform("textureSampler");
-=======
 		// Add uniforms for textures
 		animProg->addUniform("texture_diffuse1");
 		animProg->addUniform("texture_specular1");
@@ -248,14 +221,14 @@ public:
 		animProg->addAttribute("vertBitan");
 		animProg->addAttribute("boneIDs");
 		animProg->addAttribute("weights");
->>>>>>> Stashed changes
+
 
 		// Create the wolf model
-		//wolfModel = new Model();
-		wolfModel = new Shape();
+		wolfModel = new Model();
+		//wolfModel = new Shape();
 		lastTime = glfwGetTime();
 
-		plantModel = new Shape();
+		//plantModel = new Shape();
 	}
 
 	// Initialize the ground plane
@@ -401,37 +374,15 @@ public:
 		wolfModel->setPosition(wolfPosition);
 
 		// Apply a -180 degree rotation when drawing the wolf to align it with the movement direction
-<<<<<<< Updated upstream
-		wolfModel->setRotation(wolfRotation - glm::radians(180.0f));
-=======
 		wolfModel->setRotation(wolfRotation - glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
->>>>>>> Stashed changes
 	}
 
 	// Draw the wolf using matrix stack
 	void drawWolf(shared_ptr<Program> curS, std::shared_ptr<MatrixStack> Model) {
-<<<<<<< Updated upstream
-		curS->bind();
 
-		// Set wolf material
-		glUniform3f(curS->getUniform("MatAmb"), 0.1f, 0.1f, 0.1f);
-		glUniform3f(curS->getUniform("MatDif"), 0.8f, 0.8f, 0.8f);
-		glUniform3f(curS->getUniform("MatSpec"), 0.3f, 0.3f, 0.3f);
-		glUniform1f(curS->getUniform("MatShine"), 32.0f);
-
-		// Set texture uniforms
-		glUniform1i(curS->getUniform("hasTexture"), 0);
-		glUniform1i(curS->getUniform("textureSampler"), 0);
-
-=======
->>>>>>> Stashed changes
 		// Use matrix stack for wolf model
 		Model->pushMatrix();
 		Model->loadIdentity();
-
-<<<<<<< Updated upstream
-		// The FBXModel class already handles position and rotation internally,
-=======
 		curS->bind();
 
 		// Set base material properties (these will be overridden by per-mesh materials)
@@ -445,7 +396,6 @@ public:
 		// Set texture uniforms
 
 		// The Model class already handles position and rotation internally,
->>>>>>> Stashed changes
 		// but we can use the matrix stack to add additional transformations if needed
 		// For now, we'll just use an identity matrix
 		glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
@@ -462,10 +412,7 @@ public:
 		glfwGetFramebufferSize(windowManager->getHandle(), &width, &height);
 		glViewport(0, 0, width, height);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-<<<<<<< Updated upstream
-=======
 		glEnable(GL_PROGRAM_POINT_SIZE);
->>>>>>> Stashed changes
 
 		float aspect = width / (float)height;
 
@@ -516,25 +463,8 @@ public:
 		glUniform3f(animProg->getUniform("lightPos"), lightPos.x, lightPos.y, lightPos.z);
 		drawWolf(animProg, Model);
 		animProg->unbind();
-<<<<<<< Updated upstream
-=======
 
 		prog->bind();
-		// Use matrix stack for plant model
-		Model->pushMatrix();
-		Model->loadIdentity();
-
-		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
-		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
-		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
-		glUniform3f(prog->getUniform("lightPos"), lightPos.x, lightPos.y, lightPos.z);
-
-		// Draw the plant model
-		plantModel->draw(prog);
-
-		Model->popMatrix();
-		prog->unbind();
->>>>>>> Stashed changes
 
 		// Pop matrix stacks
 		Projection->popMatrix();
@@ -573,51 +503,19 @@ int main(int argc, char* argv[]) {
 	application->initGround();
 
 	// Load the wolf model
-<<<<<<< Updated upstream
-	if (application->wolfModel->loadModel(resourceDir + "/models/wolf.fbx")) {
-		application->wolfModel->setScale(0.025f);
-
-		// Directly set walk animation (1)
-		application->wolfModel->setAnimation(1);
-
-		// Set wolf materials
-		application->wolfModel->setMeshMaterial(0,
-			glm::vec3(0.13f, 0.10f, 0.08f),  // Ambient
-			glm::vec3(0.60f, 0.45f, 0.35f),  // Diffuse
-			glm::vec3(0.3f, 0.3f, 0.3f),     // Specular
-			16.0f);                          // Shininess
-=======
-	if (application->wolfModel->loadMesh(resourceDir + "/models/wolf.fbx")) { // Changed from loadModel to loadMesh
-		application->wolfModel->init(); // Add this line for initialization
+	if (application->wolfModel->loadModel(resourceDir + "/models/wolf.fbx")) { // Changed from loadModel to loadMesh
 		application->wolfModel->setScale(glm::vec3(0.025f));
 		application->wolfModel->setAnimation(1);
->>>>>>> Stashed changes
 	}
 	else {
 		std::cerr << "Failed to load wolf model!" << std::endl;
 	}
 
-<<<<<<< Updated upstream
 	while (!glfwWindowShouldClose(windowManager->getHandle())) {
 		application->render();
 		glfwSwapBuffers(windowManager->getHandle());
 		glfwPollEvents();
 	}
-=======
-	// Load the wolf model
-	if (application->plantModel->loadMesh(resourceDir + "/models/potted_plant.fbx")) { // Changed from loadModel to loadMesh
-		application->plantModel->init(); // Add this line for initialization
-	}
-	else {
-		std::cerr << "Failed to load plant model!" << std::endl;
-	}
-
-	while (!glfwWindowShouldClose(windowManager->getHandle())) {
-		application->render();
-		glfwSwapBuffers(windowManager->getHandle());
-		glfwPollEvents();
-	}
->>>>>>> Stashed changes
 
 	windowManager->shutdown();
 	return 0;
