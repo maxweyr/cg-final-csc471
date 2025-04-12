@@ -1,49 +1,49 @@
-// Shape.cpp
-#include "Shape.h"
+// Model.cpp
+#include "Model.h"
 #include <iostream>
-#include <cassert>
-#include "GLSL.h"
-#include "Program.h"
+#include <glm/gtc/type_ptr.hpp>
 #include "stb_image.h"
+#include <functional>
 
-#include <glm/gtc/matrix_transform.hpp>
-
-using namespace std;
-
-Shape::Shape() :
+Model::Model() :
     currentAnimation(0),
     animationTime(0.0f),
     position(0.0f),
     rotationAngle(0.0f),
     rotationAxis(0.0f, 1.0f, 0.0f),
-    scale(1.0f),
-    scene(nullptr)
-{
+    scale(1.0f, 1.0f, 1.0f),
+    scene(nullptr) {
 }
 
-Shape::~Shape()
-{
+Model::~Model() {
     // Clean up OpenGL resources
     for (auto& mesh : meshes) {
         glDeleteVertexArrays(1, &mesh.VAO);
         glDeleteBuffers(1, &mesh.VBO);
         glDeleteBuffers(1, &mesh.EBO);
     }
+
+    // Clean up textures
+    for (auto& mesh : meshes) {
+        for (auto& texture : mesh.textures) {
+            glDeleteTextures(1, &texture.id);
+        }
+    }
 }
 
-bool Shape::loadMesh(const std::string& path)
-{
-    // Store the directory for loading textures
+bool Model::loadModel(const std::string& path) {
+    // Store the directory for loading associated textures
     directory = path.substr(0, path.find_last_of("/\\"));
 
-    // Import the model with Assimp
+    // Import using Assimp
     unsigned int importFlags =
-        aiProcess_Triangulate |
-        aiProcess_GenSmoothNormals |
-        aiProcess_FlipUVs |
-        aiProcess_CalcTangentSpace |
-        aiProcess_JoinIdenticalVertices |
-        aiProcess_LimitBoneWeights;
+        aiProcess_Triangulate |            // Triangulate polygons (if any)
+        aiProcess_GenSmoothNormals |       // Generate normals if not present
+        aiProcess_FlipUVs |                // Flip texture coords
+        aiProcess_CalcTangentSpace |       // Calculate tangents for normal mapping
+        aiProcess_JoinIdenticalVertices |  // Optimize mesh
+        aiProcess_LimitBoneWeights |       // Limit bone weights to 4 per vertex
+        aiProcess_ImproveCacheLocality;    // Improve cache locality
 
     scene = importer.ReadFile(path, importFlags);
 
@@ -53,27 +53,8 @@ bool Shape::loadMesh(const std::string& path)
         return false;
     }
 
-    // Process the model data
+    // Process nodes recursively
     processNode(scene->mRootNode, scene);
-
-    // Calculate bounding box
-    if (!meshes.empty() && !meshes[0].vertices.empty()) {
-        min = max = meshes[0].vertices[0].position;
-
-        for (const auto& mesh : meshes) {
-            for (const auto& vertex : mesh.vertices) {
-                // Update min
-                min.x = std::min<float>(min.x, vertex.position.x);
-                min.y = std::min<float>(min.y, vertex.position.y);
-                min.z = std::min<float>(min.z, vertex.position.z);
-
-                // Update max
-                max.x = std::max<float>(max.x, vertex.position.x);
-                max.y = std::max<float>(max.y, vertex.position.y);
-                max.z = std::max<float>(max.z, vertex.position.z);
-            }
-        }
-    }
 
     // Load animations if available
     loadAnimations(scene);
@@ -89,8 +70,7 @@ bool Shape::loadMesh(const std::string& path)
     return true;
 }
 
-void Shape::processNode(aiNode* node, const aiScene* scene)
-{
+void Model::processNode(aiNode* node, const aiScene* scene) {
     // Process all meshes in this node
     for (unsigned int i = 0; i < node->mNumMeshes; i++) {
         aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
@@ -103,8 +83,7 @@ void Shape::processNode(aiNode* node, const aiScene* scene)
     }
 }
 
-Shape::Mesh Shape::processMesh(aiMesh* mesh, const aiScene* scene)
-{
+Model::Mesh Model::processMesh(aiMesh* mesh, const aiScene* scene) {
     Mesh result;
 
     // Process vertices
@@ -143,7 +122,7 @@ Shape::Mesh Shape::processMesh(aiMesh* mesh, const aiScene* scene)
             vertex.texCoords = glm::vec2(0.0f, 0.0f);
         }
 
-        // Initialize bone weights and IDs
+        // Default bone indices and weights to prevent uninitialized values
         vertex.boneIDs = glm::ivec4(-1, -1, -1, -1);
         vertex.weights = glm::vec4(0.0f);
 
@@ -165,14 +144,14 @@ Shape::Mesh Shape::processMesh(aiMesh* mesh, const aiScene* scene)
             std::string boneName = bone->mName.C_Str();
             int boneID = 0;
 
-            // If bone isn't already processed
+            // If bone isn't already in the bone list
             if (boneMap.find(boneName) == boneMap.end()) {
                 boneID = bones.size();
                 Bone newBone;
                 newBone.name = boneName;
                 newBone.id = boneID;
 
-                // Convert Assimp matrix to GLM matrix
+                // Convert from Assimp matrix to GLM
                 aiMatrix4x4 offset = bone->mOffsetMatrix;
                 newBone.offset = glm::mat4(
                     offset.a1, offset.b1, offset.c1, offset.d1,
@@ -218,6 +197,9 @@ Shape::Mesh Shape::processMesh(aiMesh* mesh, const aiScene* scene)
     if (mesh->mMaterialIndex >= 0) {
         aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
 
+        // Process material properties
+        result.material = processMaterial(material);
+
         // Load diffuse textures
         std::vector<Texture> diffuseMaps = loadMaterialTextures(material, aiTextureType_DIFFUSE, "texture_diffuse", scene);
         result.textures.insert(result.textures.end(), diffuseMaps.begin(), diffuseMaps.end());
@@ -229,39 +211,157 @@ Shape::Mesh Shape::processMesh(aiMesh* mesh, const aiScene* scene)
         // Load normal maps
         std::vector<Texture> normalMaps = loadMaterialTextures(material, aiTextureType_NORMALS, "texture_normal", scene);
         result.textures.insert(result.textures.end(), normalMaps.begin(), normalMaps.end());
+
+        // Load height maps
+        std::vector<Texture> heightMaps = loadMaterialTextures(material, aiTextureType_HEIGHT, "texture_height", scene);
+        result.textures.insert(result.textures.end(), heightMaps.begin(), heightMaps.end());
+
+        // Load emissive maps
+        std::vector<Texture> emissiveMaps = loadMaterialTextures(material, aiTextureType_EMISSIVE, "texture_emissive", scene);
+        result.textures.insert(result.textures.end(), emissiveMaps.begin(), emissiveMaps.end());
+
+        // Set hasTexture flag
+        result.material.hasTexture = !result.textures.empty();
+    }
+
+    // Create OpenGL buffers
+    glGenVertexArrays(1, &result.VAO);
+    glGenBuffers(1, &result.VBO);
+    glGenBuffers(1, &result.EBO);
+
+    glBindVertexArray(result.VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, result.VBO);
+    glBufferData(GL_ARRAY_BUFFER, result.vertices.size() * sizeof(Vertex), &result.vertices[0], GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, result.EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, result.indices.size() * sizeof(unsigned int), &result.indices[0], GL_STATIC_DRAW);
+
+    // Vertex positions
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+
+    // Vertex normals
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+
+    // Vertex texture coords
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoords));
+
+    // Vertex tangent
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, tangent));
+
+    // Vertex bitangent
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, bitangent));
+
+    // Vertex bone IDs
+    glEnableVertexAttribArray(5);
+    glVertexAttribIPointer(5, 4, GL_INT, sizeof(Vertex), (void*)offsetof(Vertex, boneIDs));
+
+    // Vertex weights
+    glEnableVertexAttribArray(6);
+    glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, weights));
+
+    glBindVertexArray(0);
+
+    return result;
+}
+
+Model::Material Model::processMaterial(aiMaterial* material) {
+    Material result;
+
+    // Set default values
+    result.ambient = glm::vec3(0.2f, 0.2f, 0.2f);
+    result.diffuse = glm::vec3(0.8f, 0.8f, 0.8f);
+    result.specular = glm::vec3(0.5f, 0.5f, 0.5f);
+    result.emissive = glm::vec3(0.0f, 0.0f, 0.0f);
+    result.shininess = 32.0f;
+    result.opacity = 1.0f;
+    result.hasTexture = false;
+
+    // Try to load material properties
+    aiColor3D color(0.0f, 0.0f, 0.0f);
+    float value = 0.0f;
+
+    // Ambient color
+    if (material->Get(AI_MATKEY_COLOR_AMBIENT, color) == AI_SUCCESS) {
+        result.ambient = glm::vec3(color.r, color.g, color.b);
+    }
+
+    // Diffuse color
+    if (material->Get(AI_MATKEY_COLOR_DIFFUSE, color) == AI_SUCCESS) {
+        result.diffuse = glm::vec3(color.r, color.g, color.b);
+    }
+
+    // Specular color
+    if (material->Get(AI_MATKEY_COLOR_SPECULAR, color) == AI_SUCCESS) {
+        result.specular = glm::vec3(color.r, color.g, color.b);
+    }
+
+    // Emissive color
+    if (material->Get(AI_MATKEY_COLOR_EMISSIVE, color) == AI_SUCCESS) {
+        result.emissive = glm::vec3(color.r, color.g, color.b);
+    }
+
+    // Shininess
+    if (material->Get(AI_MATKEY_SHININESS, value) == AI_SUCCESS) {
+        result.shininess = value;
+    }
+
+    // Opacity
+    if (material->Get(AI_MATKEY_OPACITY, value) == AI_SUCCESS) {
+        result.opacity = value;
     }
 
     return result;
 }
 
-std::vector<Shape::Texture> Shape::loadMaterialTextures(aiMaterial* mat, aiTextureType type, const std::string& typeName, const aiScene* scene)
-{
+std::vector<Model::Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType type,
+    const std::string& typeName, const aiScene* scene) {
     std::vector<Texture> textures;
 
     for (unsigned int i = 0; i < mat->GetTextureCount(type); i++) {
         aiString str;
         mat->GetTexture(type, i, &str);
-        bool skip = false;
 
         // Check if texture was loaded before
-        for (auto& j : loadedTextures) {
-            if (j.first == str.C_Str()) {
+        bool skip = false;
+        for (unsigned int j = 0; j < loadedTextures.size(); j++) {
+            if (loadedTextures.find(str.C_Str()) != loadedTextures.end()) {
                 Texture texture;
-                texture.id = j.second;
+                texture.id = loadedTextures[str.C_Str()];
                 texture.type = typeName;
                 texture.path = str.C_Str();
+                texture.embedded = false;
                 textures.push_back(texture);
                 skip = true;
                 break;
             }
         }
 
-        // If texture hasn't been loaded already, load it
         if (!skip) {
             Texture texture;
-            texture.id = loadTexture(directory + "/" + str.C_Str());
             texture.type = typeName;
             texture.path = str.C_Str();
+
+            // Check if the texture is embedded
+            const aiTexture* embeddedTexture = scene->GetEmbeddedTexture(str.C_Str());
+            if (embeddedTexture) {
+                texture.id = loadEmbeddedTexture(embeddedTexture);
+                texture.embedded = true;
+                std::cout << "Loaded embedded texture: " << str.C_Str() << std::endl;
+            }
+            else {
+                // Check if texture file exists
+                std::string fullPath = directory + "/" + str.C_Str();
+                texture.id = loadTextureFromFile(fullPath);
+                texture.embedded = false;
+                std::cout << "Loaded texture: " << fullPath << std::endl;
+            }
+
             textures.push_back(texture);
             loadedTextures[str.C_Str()] = texture.id;
         }
@@ -270,8 +370,7 @@ std::vector<Shape::Texture> Shape::loadMaterialTextures(aiMaterial* mat, aiTextu
     return textures;
 }
 
-unsigned int Shape::loadTexture(const std::string& path)
-{
+unsigned int Model::loadTextureFromFile(const std::string& path) {
     unsigned int textureID;
     glGenTextures(1, &textureID);
 
@@ -280,21 +379,25 @@ unsigned int Shape::loadTexture(const std::string& path)
 
     if (data) {
         GLenum format;
-        if (nrComponents == 1)
+        if (nrComponents == 1) {
             format = GL_RED;
-        else if (nrComponents == 3)
+        }
+        else if (nrComponents == 3) {
             format = GL_RGB;
-        else if (nrComponents == 4)
+        }
+        else if (nrComponents == 4) {
             format = GL_RGBA;
+        }
         else {
-            std::cout << "Texture format not supported: " << path << std::endl;
             format = GL_RGB;
+            std::cout << "Unknown image format with " << nrComponents << " components" << std::endl;
         }
 
         glBindTexture(GL_TEXTURE_2D, textureID);
         glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
 
+        // Set texture parameters
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -303,23 +406,91 @@ unsigned int Shape::loadTexture(const std::string& path)
         stbi_image_free(data);
     }
     else {
-        std::cout << "Texture failed to load: " << path << std::endl;
+        std::cout << "Texture failed to load at path: " << path << std::endl;
         stbi_image_free(data);
+        return 0;
     }
 
     return textureID;
 }
 
-void Shape::loadAnimations(const aiScene* scene)
-{
+unsigned int Model::loadEmbeddedTexture(const aiTexture* embeddedTexture) {
+    unsigned int textureID;
+    glGenTextures(1, &textureID);
+
+    int width, height, nrComponents;
+    unsigned char* data;
+
+    // Check if texture is compressed (mHeight == 0 means it's compressed)
+    if (embeddedTexture->mHeight == 0) {
+        // Compressed texture format, use stbi to load it
+        data = stbi_load_from_memory(
+            reinterpret_cast<const stbi_uc*>(embeddedTexture->pcData),
+            embeddedTexture->mWidth,
+            &width, &height, &nrComponents, 0);
+
+        if (data) {
+            GLenum format;
+            if (nrComponents == 1) {
+                format = GL_RED;
+            }
+            else if (nrComponents == 3) {
+                format = GL_RGB;
+            }
+            else if (nrComponents == 4) {
+                format = GL_RGBA;
+            }
+            else {
+                format = GL_RGB;
+                std::cout << "Unknown embedded texture format with " << nrComponents << " components" << std::endl;
+            }
+
+            glBindTexture(GL_TEXTURE_2D, textureID);
+            glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+            glGenerateMipmap(GL_TEXTURE_2D);
+
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+            stbi_image_free(data);
+        }
+        else {
+            std::cout << "Embedded texture failed to load" << std::endl;
+            stbi_image_free(data);
+            return 0;
+        }
+    }
+    else {
+        // Uncompressed format, raw RGBA data
+        width = embeddedTexture->mWidth;
+        height = embeddedTexture->mHeight;
+
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, embeddedTexture->pcData);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+
+    return textureID;
+}
+
+void Model::loadAnimations(const aiScene* scene) {
     if (!scene->HasAnimations()) {
         return;
     }
 
+    // Process each animation
     for (unsigned int i = 0; i < scene->mNumAnimations; i++) {
         aiAnimation* anim = scene->mAnimations[i];
         Animation animation;
 
+        // Store animation properties
         animation.name = anim->mName.length > 0 ? anim->mName.C_Str() : "Animation_" + std::to_string(i);
         animation.duration = anim->mDuration;
         animation.ticksPerSecond = anim->mTicksPerSecond != 0 ? anim->mTicksPerSecond : 25.0f;
@@ -334,60 +505,7 @@ void Shape::loadAnimations(const aiScene* scene)
     }
 }
 
-void Shape::init()
-{
-    for (auto& mesh : meshes) {
-        // Create VAO, VBO, EBO
-        glGenVertexArrays(1, &mesh.VAO);
-        glGenBuffers(1, &mesh.VBO);
-        glGenBuffers(1, &mesh.EBO);
-
-        glBindVertexArray(mesh.VAO);
-
-        // Load vertex data
-        glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
-        glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(Vertex), &mesh.vertices[0], GL_STATIC_DRAW);
-
-        // Load index data
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), &mesh.indices[0], GL_STATIC_DRAW);
-
-        // Set vertex attribute pointers
-
-        // Position
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-
-        // Normal
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
-
-        // Texture coords
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texCoords));
-
-        // Tangent
-        glEnableVertexAttribArray(3);
-        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, tangent));
-
-        // Bitangent
-        glEnableVertexAttribArray(4);
-        glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, bitangent));
-
-        // Bone IDs
-        glEnableVertexAttribArray(5);
-        glVertexAttribIPointer(5, 4, GL_INT, sizeof(Vertex), (void*)offsetof(Vertex, boneIDs));
-
-        // Bone weights
-        glEnableVertexAttribArray(6);
-        glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, weights));
-
-        glBindVertexArray(0);
-    }
-}
-
-void Shape::update(float deltaTime)
-{
+void Model::update(float deltaTime) {
     if (animations.empty() || !scene || !scene->HasAnimations()) {
         return;  // No animations to update
     }
@@ -411,9 +529,7 @@ void Shape::update(float deltaTime)
     updateBoneTransforms(animationTime, scene);
 }
 
-void Shape::updateBoneTransforms(float time, const aiScene* scene)
-{
-    // Skip if no animation or invalid index
+void Model::updateBoneTransforms(float time, const aiScene* scene) {
     if (!scene->HasAnimations() || currentAnimation >= scene->mNumAnimations) {
         return;
     }
@@ -448,10 +564,6 @@ void Shape::updateBoneTransforms(float time, const aiScene* scene)
         }
 
         unsigned int nextIndex = index + 1;
-        if (nextIndex >= nodeAnim->mNumPositionKeys) {
-            nextIndex = 0;
-        }
-
         float t = (time - nodeAnim->mPositionKeys[index].mTime) /
             (nodeAnim->mPositionKeys[nextIndex].mTime - nodeAnim->mPositionKeys[index].mTime);
 
@@ -476,10 +588,6 @@ void Shape::updateBoneTransforms(float time, const aiScene* scene)
         }
 
         unsigned int nextIndex = index + 1;
-        if (nextIndex >= nodeAnim->mNumRotationKeys) {
-            nextIndex = 0;
-        }
-
         float t = (time - nodeAnim->mRotationKeys[index].mTime) /
             (nodeAnim->mRotationKeys[nextIndex].mTime - nodeAnim->mRotationKeys[index].mTime);
 
@@ -506,10 +614,6 @@ void Shape::updateBoneTransforms(float time, const aiScene* scene)
         }
 
         unsigned int nextIndex = index + 1;
-        if (nextIndex >= nodeAnim->mNumScalingKeys) {
-            nextIndex = 0;
-        }
-
         float t = (time - nodeAnim->mScalingKeys[index].mTime) /
             (nodeAnim->mScalingKeys[nextIndex].mTime - nodeAnim->mScalingKeys[index].mTime);
 
@@ -525,7 +629,7 @@ void Shape::updateBoneTransforms(float time, const aiScene* scene)
         std::string nodeName = node->mName.C_Str();
         aiMatrix4x4 nodeTransformation = node->mTransformation;
 
-        // Check if this node has an animation channel
+        // Find animation channel for this node
         const aiNodeAnim* nodeAnim = findNodeAnim(nodeName);
         if (nodeAnim) {
             // Interpolate transformation
@@ -533,7 +637,7 @@ void Shape::updateBoneTransforms(float time, const aiScene* scene)
             aiQuaternion rotation = interpolateRotation(time, nodeAnim);
             aiVector3D scaling = interpolateScaling(time, nodeAnim);
 
-            // Create transformation matrices
+            // Create transformation matrix
             aiMatrix4x4 positionMat;
             aiMatrix4x4::Translation(position, positionMat);
 
@@ -556,7 +660,7 @@ void Shape::updateBoneTransforms(float time, const aiScene* scene)
         }
         };
 
-    // Calculate all node transformations starting from the root node
+    // Start from the root node with identity matrix
     aiMatrix4x4 identity;
     calculateNodeTransform(scene->mRootNode, identity);
 
@@ -580,8 +684,7 @@ void Shape::updateBoneTransforms(float time, const aiScene* scene)
     }
 }
 
-void Shape::setAnimation(int animIndex)
-{
+void Model::setAnimation(int animIndex) {
     if (animIndex >= 0 && animIndex < animations.size()) {
         currentAnimation = animIndex;
         animationTime = 0.0f; // Reset animation time when switching
@@ -593,51 +696,81 @@ void Shape::setAnimation(int animIndex)
     }
 }
 
-int Shape::getAnimationCount() const
-{
+int Model::getAnimationCount() const {
     return animations.size();
 }
 
-std::string Shape::getAnimationName(int index) const
-{
+std::string Model::getAnimationName(int index) const {
     if (index >= 0 && index < animations.size()) {
         return animations[index].name;
     }
     return "Unknown";
 }
 
-void Shape::draw(const std::shared_ptr<Program> prog) const
-{
-    // Calculate model matrix
+bool Model::hasTextures() const {
+    for (const auto& mesh : meshes) {
+        if (!mesh.textures.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void Model::setMeshMaterial(int meshIndex, const glm::vec3& ambient, const glm::vec3& diffuse,
+    const glm::vec3& specular, float shininess) {
+    if (meshIndex >= 0 && meshIndex < meshes.size()) {
+        meshes[meshIndex].material.ambient = ambient;
+        meshes[meshIndex].material.diffuse = diffuse;
+        meshes[meshIndex].material.specular = specular;
+        meshes[meshIndex].material.shininess = shininess;
+    }
+}
+
+void Model::draw(std::shared_ptr<Program> shader) {
+    // Set model matrix based on position, rotation and scale
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, position);
     model = glm::rotate(model, rotationAngle, rotationAxis);
     model = glm::scale(model, scale);
 
-    // Set model matrix in shader
-    glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, glm::value_ptr(model));
+    glUniformMatrix4fv(shader->getUniform("M"), 1, GL_FALSE, glm::value_ptr(model));
 
-    // Set bone transforms in shader if any bones exist
+    // Set bone transforms if needed
     if (!boneTransforms.empty()) {
         for (unsigned int i = 0; i < boneTransforms.size(); i++) {
             std::string uniformName = "boneTransforms[" + std::to_string(i) + "]";
-            glUniformMatrix4fv(prog->getUniform(uniformName), 1, GL_FALSE, glm::value_ptr(boneTransforms[i]));
+            glUniformMatrix4fv(shader->getUniform(uniformName), 1, GL_FALSE, glm::value_ptr(boneTransforms[i]));
         }
     }
 
-    // Draw each mesh
-    for (const auto& mesh : meshes) {
+    // Draw meshes
+    for (unsigned int i = 0; i < meshes.size(); i++) {
+        const auto& mesh = meshes[i];
+
+        // Set material properties
+        glUniform3fv(shader->getUniform("material.ambient"), 1, glm::value_ptr(mesh.material.ambient));
+        glUniform3fv(shader->getUniform("material.diffuse"), 1, glm::value_ptr(mesh.material.diffuse));
+        glUniform3fv(shader->getUniform("material.specular"), 1, glm::value_ptr(mesh.material.specular));
+        glUniform3fv(shader->getUniform("material.emissive"), 1, glm::value_ptr(mesh.material.emissive));
+        glUniform1f(shader->getUniform("material.shininess"), mesh.material.shininess);
+        glUniform1f(shader->getUniform("material.opacity"), mesh.material.opacity);
+
+        // Bind appropriate textures
         unsigned int diffuseNr = 1;
         unsigned int specularNr = 1;
         unsigned int normalNr = 1;
+        unsigned int heightNr = 1;
+        unsigned int emissiveNr = 1;
 
-        // Bind appropriate textures
-        for (unsigned int i = 0; i < mesh.textures.size(); i++) {
-            glActiveTexture(GL_TEXTURE0 + i);
+        glUniform1i(shader->getUniform("material.hasTexture"), !mesh.textures.empty());
+
+        for (unsigned int j = 0; j < mesh.textures.size(); j++) {
+            // Activate proper texture unit before binding
+            glActiveTexture(GL_TEXTURE0 + j);
 
             // Retrieve texture number (e.g. diffuse_1, diffuse_2, etc.)
             std::string number;
-            std::string name = mesh.textures[i].type;
+            std::string name = mesh.textures[j].type;
 
             if (name == "texture_diffuse") {
                 number = std::to_string(diffuseNr++);
@@ -648,20 +781,23 @@ void Shape::draw(const std::shared_ptr<Program> prog) const
             else if (name == "texture_normal") {
                 number = std::to_string(normalNr++);
             }
+            else if (name == "texture_height") {
+                number = std::to_string(heightNr++);
+            }
+            else if (name == "texture_emissive") {
+                number = std::to_string(emissiveNr++);
+            }
 
             // Set the sampler to the correct texture unit
-            glUniform1i(prog->getUniform(name + number), i);
+            glUniform1i(shader->getUniform(name + number), j);
 
             // Bind the texture
-            glBindTexture(GL_TEXTURE_2D, mesh.textures[i].id);
+            glBindTexture(GL_TEXTURE_2D, mesh.textures[j].id);
         }
-
-        // Tell shader if we have textures
-        glUniform1i(prog->getUniform("material.hasTexture"), !mesh.textures.empty());
 
         // Draw mesh
         glBindVertexArray(mesh.VAO);
-        glDrawElements(GL_TRIANGLES, (int)mesh.indices.size(), GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
 
         // Reset active texture
