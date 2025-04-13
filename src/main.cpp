@@ -19,7 +19,7 @@ public:
 	WindowManager* windowManager = nullptr;
 
 	// shader programs
-	std::shared_ptr<Program> prog, texProg, animProg;
+	std::shared_ptr<Program> prog, texProg, animProg, simpleProg;
 
 	// ground data
 	GLuint GrndBuffObj, GrndNorBuffObj, GIndxBuffObj;
@@ -456,15 +456,37 @@ public:
 		drawGround(prog, Model);
 		prog->unbind();
 
-		// Draw the wolf with matrix stack
-		animProg->bind();
-		glUniformMatrix4fv(animProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
-		glUniformMatrix4fv(animProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
-		glUniform3f(animProg->getUniform("lightPos"), lightPos.x, lightPos.y, lightPos.z);
-		drawWolf(animProg, Model);
-		animProg->unbind();
+		// Create a simple program for the wolf if not already created
+		if (!simpleProg) {
+			simpleProg = make_shared<Program>();
+			simpleProg->setVerbose(true);
+			simpleProg->setShaderNames("../resources/anim_vert.glsl",
+				"../resources/anim_frag.glsl");
+			simpleProg->init();
+			simpleProg->addUniform("P");
+			simpleProg->addUniform("V");
+			simpleProg->addUniform("M");
+			simpleProg->addUniform("solidColor");
+			simpleProg->addAttribute("vertPos");
+			simpleProg->addAttribute("vertNor");
+		}
 
-		prog->bind();
+		// Draw the wolf with the simplified shader
+		simpleProg->bind();
+		glUniformMatrix4fv(simpleProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(simpleProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
+
+		// Disable depth test and face culling for debug
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_CULL_FACE);
+
+		// Use simplified drawing method
+		wolfModel->drawSimple(simpleProg);
+
+		// Re-enable depth test
+		glEnable(GL_DEPTH_TEST);
+
+		simpleProg->unbind();
 
 		// Pop matrix stacks
 		Projection->popMatrix();
@@ -503,8 +525,8 @@ int main(int argc, char* argv[]) {
 	application->initGround();
 
 	// Load the wolf model
-	if (application->wolfModel->loadModel(resourceDir + "/models/wolf.fbx")) { // Changed from loadModel to loadMesh
-		application->wolfModel->setScale(glm::vec3(0.025f));
+	if (application->wolfModel->loadModel(resourceDir + "/models/wolf.fbx")) {
+		application->wolfModel->setScale(glm::vec3(1.0f));
 		application->wolfModel->setAnimation(1);
 	}
 	else {

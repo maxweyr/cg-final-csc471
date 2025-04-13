@@ -20,6 +20,7 @@ public:
     // Core functionality
     bool loadModel(const std::string& path);
     void draw(std::shared_ptr<Program> shader);
+	void drawSimple(std::shared_ptr<Program> shader);
 
     // Transform functions
     void setPosition(const glm::vec3& pos) { position = pos; }

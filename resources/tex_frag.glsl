@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 // Texture sampler
 uniform sampler2D Texture;

@@ -10,17 +10,17 @@ set(CMAKE_CXX_STANDARD 17)
 
 # Set OpenGL version requirements
 # This will ensure we use OpenGL 4.1 specifically
-add_definitions(-DGL_SILENCE_DEPRECATION)
-add_definitions(-DGLAD_GLAPI_EXPORT)
-add_definitions(-DGLAD_GL_IMPLEMENTATION)
-add_definitions(-DGLAD_OPENGL_CORE_VERSION_4_1)
+# add_definitions(-DGL_SILENCE_DEPRECATION)
+# add_definitions(-DGLAD_GLAPI_EXPORT)
+# add_definitions(-DGLAD_GL_IMPLEMENTATION)
+# add_definitions(-DGLAD_OPENGL_CORE_VERSION_4_1)
 
 # Use glob to get the list of all source files.
 file(GLOB_RECURSE SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp" "${CMAKE_SOURCE_DIR}/ext/*/*.cpp" "${CMAKE_SOURCE_DIR}/ext/glad/src/*.c")
 
 # We don't really need to include header and resource files to build, but it's
 # nice to have them show up in IDEs.
-file(GLOB_RECURSE HEADERS "src/*.h")
+file(GLOB_RECURSE HEADERS "src/*.h" "ext/*/*.h" "ext/glad/*/*.h")
 file(GLOB_RECURSE GLSL "resources/*.glsl")
 
 include_directories("ext")

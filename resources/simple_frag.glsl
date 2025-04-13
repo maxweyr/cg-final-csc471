@@ -1,4 +1,4 @@
-#version 330 core
+#version 410 core
 
 in vec3 fragNor;		//interpolated normal vector in camera space
 in vec3 lightDir;		//interpolated light vector in camera space

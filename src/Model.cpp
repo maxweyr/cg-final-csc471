@@ -796,10 +796,85 @@ void Model::draw(std::shared_ptr<Program> shader) {
 
         // Draw mesh
         glBindVertexArray(mesh.VAO);
+        // Check for errors after binding
+        GLenum error = glGetError();
+        if (error != GL_NO_ERROR) {
+            std::cout << "Error after binding VAO: " << error << std::endl;
+        }
+        // Then draw
         glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
 
         // Reset active texture
         glActiveTexture(GL_TEXTURE0);
+    }
+}
+
+void Model::drawSimple(std::shared_ptr<Program> shader) {
+    // Clear any previous errors
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        std::cout << "Error before drawing: " << error << std::endl;
+    }
+
+    // Set model matrix based on position, rotation and scale
+    glm::mat4 model = glm::mat4(1.0f);
+    model = glm::translate(model, position);
+    model = glm::rotate(model, rotationAngle, rotationAxis);
+    model = glm::scale(model, scale);
+
+    // Debug output
+    std::cout << "Drawing model with " << meshes.size() << " meshes" << std::endl;
+    std::cout << "Position: " << position.x << ", " << position.y << ", " << position.z << std::endl;
+    std::cout << "Scale: " << scale.x << ", " << scale.y << ", " << scale.z << std::endl;
+
+    // Set the model matrix
+    GLint MLocation = shader->getUniform("M");
+    if (MLocation == -1) {
+        std::cout << "ERROR: M uniform not found in shader" << std::endl;
+    }
+    else {
+        glUniformMatrix4fv(MLocation, 1, GL_FALSE, glm::value_ptr(model));
+    }
+
+    // Set a solid color
+    GLint colorLoc = shader->getUniform("solidColor");
+    if (colorLoc != -1) {
+        glUniform3f(colorLoc, 0.8f, 0.2f, 0.2f); // Bright red for visibility
+    }
+    else {
+        std::cout << "ERROR: solidColor uniform not found in shader" << std::endl;
+    }
+
+    // Draw all meshes with simplified approach
+    for (unsigned int i = 0; i < meshes.size(); i++) {
+        const auto& mesh = meshes[i];
+
+        // Debug output
+        std::cout << "Mesh " << i << " has " << mesh.vertices.size() << " vertices and "
+            << mesh.indices.size() << " indices" << std::endl;
+
+        // Bind VAO
+        glBindVertexArray(mesh.VAO);
+        error = glGetError();
+        if (error != GL_NO_ERROR) {
+            std::cout << "Error after binding VAO: " << error << std::endl;
+        }
+
+        // Draw
+        glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
+        error = glGetError();
+        if (error != GL_NO_ERROR) {
+            std::cout << "Error after draw call: " << error << std::endl;
+        }
+
+        // Unbind VAO
+        glBindVertexArray(0);
+    }
+
+    // Check for any errors
+    error = glGetError();
+    if (error != GL_NO_ERROR) {
+        std::cout << "Error after drawing all meshes: " << error << std::endl;
     }
 }
